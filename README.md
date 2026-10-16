@@ -84,3 +84,7 @@ In the JSON, `super` means the main modifier and `alt` means the second modifier
 | `SettingsView.swift` | SwiftUI settings window and keybinding cheat sheet |
 | `Launcher.swift` | Built-in app launcher |
 | `AppDelegate.swift` | Menu-bar item, permission flow, window plumbing |
+
+## License
+
+MIT. See [LICENSE](LICENSE).
