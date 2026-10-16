@@ -130,13 +130,17 @@ struct LauncherView: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(spacing: 2) {
+                            // Rows are identified by app, not position, so a row never
+                            // keeps showing a stale app after the results change.
                             ForEach(Array(model.results.prefix(60).enumerated()), id: \.element.id) { i, e in
-                                row(i, e).id(i)
+                                row(i, e)
                             }
                         }
                         .padding(8)
                     }
-                    .onChange(of: model.selection) { _, new in proxy.scrollTo(new) }
+                    .onChange(of: model.selection) { _, new in
+                        if model.results.indices.contains(new) { proxy.scrollTo(model.results[new].id) }
+                    }
                 }
             }
         }
