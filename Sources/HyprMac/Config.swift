@@ -333,12 +333,6 @@ final class ConfigStore: ObservableObject {
 
     private init() {
         config = Config()
-        // Carry settings over from the app's earlier name.
-        let legacy = url.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("omatile/config.json")
-        if !FileManager.default.fileExists(atPath: url.path), FileManager.default.fileExists(atPath: legacy.path) {
-            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try? FileManager.default.copyItem(at: legacy, to: url)
-        }
         if FileManager.default.fileExists(atPath: url.path) {
             if let c = readFile() { config = c }
         } else {

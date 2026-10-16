@@ -78,8 +78,6 @@ echo "Built $PWD/$APP"
 
 if [[ "${1:-}" == "--install" ]]; then
     pkill -x HyprMac 2>/dev/null && sleep 1 || true
-    pkill -x OmaTile 2>/dev/null && sleep 1 || true      # the app's earlier name
-    rm -rf ~/Applications/OmaTile.app
     mkdir -p ~/Applications
     rm -rf ~/Applications/HyprMac.app
     cp -R "$APP" ~/Applications/
