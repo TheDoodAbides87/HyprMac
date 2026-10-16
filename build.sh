@@ -30,7 +30,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundleExecutable</key><string>HyprMac</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.3.2-beta</string>
+    <key>CFBundleShortVersionString</key><string>0.3.3-beta</string>
     <key>CFBundleVersion</key><string>1</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>LSUIElement</key><true/>
@@ -81,6 +81,7 @@ if [[ "${1:-}" == "--install" ]]; then
     mkdir -p ~/Applications
     rm -rf ~/Applications/HyprMac.app
     cp -R "$APP" ~/Applications/
-    open ~/Applications/HyprMac.app
+    # Launch Services can refuse a launch right after the old copy quits; retry once.
+    open ~/Applications/HyprMac.app 2>/dev/null || { sleep 2; open ~/Applications/HyprMac.app; }
     echo "Installed to ~/Applications/HyprMac.app and launched."
 fi

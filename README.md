@@ -8,7 +8,7 @@ A small native tiling window manager for macOS that brings Hyprland's tiling beh
 - **Gaps and an active border.** The defaults match a typical Hyprland config: `gaps_in 5`, `gaps_out 10`, and a 2 px border.
 - **A built-in app launcher** (⌥ Option + Space): type, use the arrow keys, and press Return.
 - **Menu-bar workspace indicator**, similar to Waybar's.
-- **Click or hover to focus.** Choose in Settings › General whether a window takes focus when you click it (the macOS default) or when the pointer rests on it.
+- **Click or hover to focus.** Choose in Settings › General whether a window takes focus when you click it (the macOS default) or when the pointer rests on it. With hover, a popup, dialog or floating window keeps focus until you click elsewhere, so the tiles around it can't cover it.
 - **A settings window** for every option. You can record shortcuts by pressing them, change the action for any key, set float/ignore rules for apps, and turn on launch at login.
 
 It doesn't need SIP turned off and has no dependencies. It's built from Swift source with the Command Line Tools.

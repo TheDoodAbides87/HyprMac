@@ -1002,34 +1002,66 @@ final class WindowManager {
         apply(w.workspace)
     }
 
-    /// Hover-to-focus. The pointer has to rest on a window briefly, so windows
-    /// crossed on the way somewhere else don't grab focus.
+    /// Hover-to-focus. The pointer has to rest briefly, so windows crossed on
+    /// the way somewhere else don't grab focus.
     func focusFollowsMouse(at p: CGPoint) {
+        guard cfg.focusFollowsMouse, drag == nil, !paused, NSEvent.pressedMouseButtons == 0 else { return }
+        hoverWork?.cancel()
+        let item = DispatchWorkItem { MainActor.assumeIsolated { self.hoverFocus() } }
+        hoverWork = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08, execute: item)
+    }
+
+    private func hoverFocus() {
         guard cfg.focusFollowsMouse, drag == nil, !paused, NSEvent.pressedMouseButtons == 0 else { return }
         // Leave focus alone while one of HyprMac's own windows (settings, launcher) is in use.
         if NSApp.isActive, NSApp.keyWindow != nil { return }
-        let vis = visibleWindows
-        // Floating windows sit on top, so they win when they overlap a tile.
-        let target = vis.first { $0.floating && rect($0)?.contains(p) == true }
-            ?? vis.first { !$0.floating && rect($0)?.contains(p) == true }
-        hoverWork?.cancel()
-        guard let w = target else {
+        if popupHasFocus { return }
+        let p = mouseLocationAX()
+        guard let top = topWindowID(at: p) else {
+            // Over the empty desktop: just remember which display the pointer is on.
             if let m = monitors.first(where: { $0.frame.contains(p) }), m.id != focusedMonitor {
                 focusedMonitor = m.id
                 onStatus?()
             }
             return
         }
-        guard w.id != focusedWindow()?.id else { return }
-        let item = DispatchWorkItem {
-            MainActor.assumeIsolated {
-                guard self.windows[w.id] === w, !w.hidden,
-                      self.rect(w)?.contains(mouseLocationAX()) == true else { return }
-                self.focus(w)
-            }
+        // Whatever is on top under the pointer decides. If that's a popup or
+        // dialog HyprMac doesn't manage (Screenshot, save sheets, alerts), leave
+        // it alone instead of raising the tile behind it over it.
+        guard let w = windows[top], !w.hidden, w.id != focusedWindow()?.id else { return }
+        focus(w)
+    }
+
+    /// True when the focused window is a popup, dialog or floating window rather
+    /// than a tile. macOS won't let HyprMac keep another app's window above the
+    /// rest, so instead such a window keeps focus until you click elsewhere;
+    /// otherwise hovering a tile beside it would raise that tile over it.
+    private var popupHasFocus: Bool {
+        guard let front = NSWorkspace.shared.frontmostApplication, front.processIdentifier != getpid(),
+              let fw = AX.element(AXUIElementCreateApplication(front.processIdentifier), kAXFocusedWindowAttribute),
+              let id = AX.windowID(fw) else { return false }
+        guard let w = windows[id] else { return true }  // a window HyprMac doesn't tile
+        return w.floating
+    }
+
+    /// The frontmost window under a point, in macOS's real stacking order, so
+    /// windows HyprMac doesn't manage count too. Ignores the Dock, menu bar and
+    /// screen-wide overlays (layer 20 and up) and HyprMac's own border.
+    private func topWindowID(at p: CGPoint) -> CGWindowID? {
+        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+                as? [[String: Any]] else { return nil }
+        let me = getpid()
+        for info in list {
+            guard let pid = (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value, pid != me,
+                  let layer = (info[kCGWindowLayer as String] as? NSNumber)?.intValue, (0..<20).contains(layer),
+                  ((info[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1) > 0,
+                  let bounds = info[kCGWindowBounds as String] as? NSDictionary,
+                  let r = CGRect(dictionaryRepresentation: bounds), r.contains(p),
+                  let n = (info[kCGWindowNumber as String] as? NSNumber)?.uint32Value else { continue }
+            return n
         }
-        hoverWork = item
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08, execute: item)
+        return nil
     }
 
     // MARK: - Geometry changes made by the user
