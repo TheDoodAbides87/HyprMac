@@ -63,8 +63,9 @@ final class WindowManager {
     /// Workspace each display last showed, so it comes back after a reconnect.
     private var lastShown: [CGDirectDisplayID: Int] = [:]
 
-    /// Where a window lived while it was minimized or its app was hidden, so it
-    /// returns to the same workspace. Forgotten when its app quits.
+    /// Where a window lived when it left the layout (minimized, app hidden, or
+    /// missing from macOS's reports), so it returns to the same workspace.
+    /// Forgotten when its app quits.
     private struct Memory {
         let pid: pid_t
         let workspace: Int
@@ -128,7 +129,7 @@ final class WindowManager {
         }
         tokens.append(NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { _ in
             MainActor.assumeIsolated {
-                guard !self.asleep else { return }  // handled on wake
+                guard !self.asleep, !self.screenUnavailable else { return }  // handled on wake
                 self.reconcileMonitors()
                 self.invalidateFrames()
                 self.applyAll()
@@ -165,6 +166,17 @@ final class WindowManager {
 
     // MARK: - Sleep, lock and wake
 
+    /// True while the screen is locked, the session is switched away, or the
+    /// display is off. Checked directly, so a background "dark wake" during a
+    /// long lock can't be mistaken for the user coming back.
+    private var screenUnavailable: Bool {
+        if let d = CGSessionCopyCurrentDictionary() as? [String: Any] {
+            if (d["CGSSessionScreenIsLocked"] as? Bool) == true { return true }
+            if (d[kCGSessionOnConsoleKey as String] as? Bool) == false { return true }
+        }
+        return CGDisplayIsAsleep(CGMainDisplayID()) != 0
+    }
+
     private func goToSleep() {
         asleep = true
         reassertWork.forEach { $0.cancel() }
@@ -176,6 +188,14 @@ final class WindowManager {
     /// back where its workspace says, a few times while macOS settles.
     private func wakeUp() {
         guard asleep else { return }
+        // Still locked or dark (e.g. a maintenance wake): check again shortly.
+        if screenUnavailable {
+            reassertWork.forEach { $0.cancel() }
+            let retry = DispatchWorkItem { MainActor.assumeIsolated { self.wakeUp() } }
+            reassertWork = [retry]
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: retry)
+            return
+        }
         asleep = false
         reassertWork.forEach { $0.cancel() }
         reassertWork = [0.5, 1.5, 4].map { delay in
@@ -186,7 +206,7 @@ final class WindowManager {
     }
 
     private func reassert() {
-        guard started, !paused, !asleep else { return }
+        guard started, !paused, !asleep, !screenUnavailable else { return }
         reconcileMonitors()
         let corner = hideCorner
         for w in windows.values where w.hidden { AX.setPosition(w.el, corner) }
@@ -284,6 +304,12 @@ final class WindowManager {
 
     private func refresh(initial: Bool = false) {
         guard started, !paused, !asleep else { return }
+        if screenUnavailable {
+            // Locked or dark without a sleep notification: hold still until it's back.
+            goToSleep()
+            wakeUp()
+            return
+        }
         var seen = Set<CGWindowID>()
         let ignore = Set(cfg.ignoreApps)
         for app in NSWorkspace.shared.runningApplications
@@ -309,8 +335,7 @@ final class WindowManager {
         for (id, w) in windows where !seen.contains(id) {
             switch disappearance(of: w) {
             case .transient: continue
-            case .parked: remove(id, remember: true)
-            case .closed: remove(id, remember: false)
+            case .parked, .closed: remove(id)
             }
         }
         applyAll()
@@ -384,12 +409,13 @@ final class WindowManager {
         return !list.isEmpty
     }
 
-    private func remove(_ id: CGWindowID, remember: Bool = false) {
+    private func remove(_ id: CGWindowID) {
         guard let w = windows.removeValue(forKey: id), let ws = workspaces[w.workspace] else { return }
-        if remember {
-            let floatFrame = w.floating ? (w.hidden ? w.floatFrame : AX.frame(w.el) ?? w.floatFrame) : nil
-            remembered[id] = Memory(pid: w.pid, workspace: w.workspace, floating: w.floating, floatFrame: floatFrame)
-        }
+        // Always remember, even for windows that look closed: if macOS was only
+        // misreporting, the same window ID comes back and returns to its workspace.
+        // Window IDs aren't reused, and entries are dropped when the app quits.
+        let floatFrame = w.floating ? (w.hidden ? w.floatFrame : AX.frame(w.el) ?? w.floatFrame) : nil
+        remembered[id] = Memory(pid: w.pid, workspace: w.workspace, floating: w.floating, floatFrame: floatFrame)
         snapWork.removeValue(forKey: id)?.cancel()
         Dwindle.remove(ws, id)
         if ws.fullscreen == id { ws.fullscreen = nil }
