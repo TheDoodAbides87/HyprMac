@@ -4,8 +4,9 @@ A small native tiling window manager for macOS that brings Hyprland's tiling beh
 
 - **Dwindle layout.** Each new window splits the focused tile along its longer side, so windows form a spiral, the same as Hyprland's default layout.
 - **Workspaces 1–10.** HyprMac runs its own workspaces, like Hyprland, instead of using macOS Spaces. Each display shows one workspace, and switching is instant with no Mission Control animation.
-- **Hyprland-style keybindings**, plus the mouse bindings: SUPER+drag, SUPER+right-drag and SUPER+scroll.
+- **Hyprland-style keybindings**, plus mouse controls: hold ⌥ Option and drag, right-drag or scroll.
 - **Gaps and an active border.** The defaults match a typical Hyprland config: `gaps_in 5`, `gaps_out 10`, and a 2 px border.
+- **A built-in app launcher** (⌥ Option + Space): type, use the arrow keys, and press Return.
 - **Menu-bar workspace indicator**, similar to Waybar's.
 - **A settings window** for every option. You can record shortcuts by pressing them, change the action for any key, set float/ignore rules for apps, and turn on launch at login.
 
@@ -23,33 +24,33 @@ This builds `build/HyprMac.app`, copies it to `~/Applications`, and launches it.
 
 ## Default keybindings
 
-SUPER and ALT keep their physical positions from a PC keyboard: **SUPER = ⌥ Option**, **ALT = ⌘ Command**. You can remap either one under Settings › General, for example SUPER = ⌘ if you'd rather keep ⌥-arrow for jumping between words.
+Window shortcuts use **⌥ Option** as the main modifier. A few also add **⌘ Command** as a second modifier. You can change both under Settings › General. For example, pick ⌘ Command as the main modifier if you'd rather keep ⌥ + arrow for jumping between words.
 
 | Shortcut | Action |
 |---|---|
-| SUPER + Return | Terminal (Ghostty / Alacritty / kitty / WezTerm / iTerm / Terminal, whichever is installed) |
-| SUPER + Space | App launcher (sends ⌘Space, so Spotlight / Raycast / Alfred opens) |
-| SUPER + ALT + Space | HyprMac settings |
-| SUPER + K | Keybinding cheat sheet |
-| SUPER + SHIFT + B / F / N / M / T | Browser / Finder / editor / music / Activity Monitor |
-| SUPER + W | Close window |
-| SUPER + T | Toggle floating |
-| SUPER + F | Fullscreen |
-| SUPER + ALT + F | Maximize, keeping gaps |
-| SUPER + J | Toggle split direction |
-| SUPER + P | Pseudo-tile (window keeps its own size, centred in its tile) |
-| SUPER + ←↑→↓ | Move focus (crosses monitors) |
-| SUPER + SHIFT + ←↑→↓ | Swap window (moves to the next monitor at an edge) |
-| SUPER + − / = | Shrink / grow width |
-| SUPER + SHIFT + − / = | Shrink / grow height |
-| SUPER + 1…0 | Switch to workspace 1–10 |
-| SUPER + SHIFT + 1…0 | Move window to workspace 1–10 |
-| SUPER + Tab / SHIFT + Tab | Next / previous occupied workspace |
-| SUPER + CTRL + Tab | Former workspace |
-| SUPER + CTRL + Esc | Pause / resume tiling |
-| SUPER + drag | Move window. Drop a tiled window on another to swap them |
-| SUPER + right-drag | Resize window |
-| SUPER + scroll | Cycle workspaces |
+| ⌥ Option + Return | Terminal (Ghostty / Alacritty / kitty / WezTerm / iTerm / Terminal, whichever is installed) |
+| ⌥ Option + Space | App launcher (change the action to “Spotlight search” to use Spotlight / Raycast / Alfred) |
+| ⌥ Option + ⌘ Command + Space | HyprMac settings |
+| ⌥ Option + K | Keybinding cheat sheet |
+| ⌥ Option + ⇧ Shift + B / F / N / M / T | Browser / Finder / editor / music / Activity Monitor |
+| ⌥ Option + W | Close window |
+| ⌥ Option + T | Toggle floating |
+| ⌥ Option + F | Fullscreen |
+| ⌥ Option + ⌘ Command + F | Maximize, keeping gaps |
+| ⌥ Option + J | Toggle split direction |
+| ⌥ Option + P | Pseudo-tile (window keeps its own size, centred in its tile) |
+| ⌥ Option + ←↑→↓ | Move focus (crosses monitors) |
+| ⌥ Option + ⇧ Shift + ←↑→↓ | Swap window (moves to the next monitor at an edge) |
+| ⌥ Option + − / = | Shrink / grow width |
+| ⌥ Option + ⇧ Shift + − / = | Shrink / grow height |
+| ⌥ Option + 1…0 | Switch to workspace 1–10 |
+| ⌥ Option + ⇧ Shift + 1…0 | Move window to workspace 1–10 |
+| ⌥ Option + Tab / ⇧ Shift + Tab | Next / previous occupied workspace |
+| ⌃ Control + ⌥ Option + Tab | Former workspace |
+| ⌃ Control + ⌥ Option + Esc | Pause / resume tiling |
+| ⌥ Option + drag | Move window. Drop a tiled window on another to swap them |
+| ⌥ Option + right-drag | Resize window |
+| ⌥ Option + scroll | Cycle workspaces |
 
 You can also drag a tiled window by its title bar and drop it on another window to swap them. Dragging a tile edge resizes the split.
 
@@ -63,13 +64,13 @@ Exec bindings run through `zsh -c`, with Homebrew on the `PATH`. For example:
 { "mods": ["super", "shift"], "key": "g", "action": "exec", "arg": "open -na Ghostty --args -e lazygit" }
 ```
 
-Recognised modifier names are `super`, `alt`, `ctrl` and `shift`, plus `cmd` and `opt` for a physical key that isn't mapped to SUPER or ALT.
+In the JSON, `super` means the main modifier and `alt` means the second modifier, whichever keys you chose for them. The other names are `ctrl` and `shift`, plus `cmd` and `opt` for a physical key that isn't the main or second modifier.
 
 ## macOS caveats
 
 - **Workspaces are emulated.** Windows on hidden workspaces are moved to the bottom-right corner of the screen, and about 1 px of them may show. When you quit or pause HyprMac, every window is brought back on screen.
 - **Multiple monitors:** turn off System Settings › Desktop & Dock › *Displays have separate Spaces*, then log out once. Also turn off *Automatically rearrange Spaces*.
-- Native macOS full screen (the green button) creates its own Space. Use SUPER+F instead.
+- Native macOS full screen (the green button) creates its own Space. Use ⌥ Option + F instead.
 - HyprMac has no animations and no blur. macOS doesn't let a third-party window manager draw those effects on other apps' windows.
 
 ## Source layout
@@ -80,5 +81,6 @@ Recognised modifier names are `super`, `alt`, `ctrl` and `shift`, plus `cmd` and
 | `WindowManager.swift` | Window discovery (AX observers), workspaces, monitors, focus, actions, mouse drag |
 | `InputTap.swift` | CGEventTap that handles hotkeys and mouse bindings; active-border overlay |
 | `Config.swift` | Config model, default bindings, JSON store, key names |
-| `SettingsView.swift` | SwiftUI settings window and SUPER+K cheat sheet |
+| `SettingsView.swift` | SwiftUI settings window and keybinding cheat sheet |
+| `Launcher.swift` | Built-in app launcher |
 | `AppDelegate.swift` | Menu-bar item, permission flow, window plumbing |

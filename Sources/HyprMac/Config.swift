@@ -3,7 +3,8 @@ import Combine
 
 // MARK: - Modifiers
 
-/// A physical Mac modifier that the Hyprland names SUPER / ALT can be mapped onto.
+/// A physical Mac modifier. Bindings store "super" (the main modifier) and "alt"
+/// (the second modifier); the user picks which physical keys those are.
 enum ModKey: String, Codable, CaseIterable, Identifiable {
     case option, command, control
 
@@ -39,7 +40,7 @@ enum Action: String, Codable, CaseIterable, Identifiable {
     case workspacenext, workspaceprev, workspaceformer
     case close, togglefloating, fullscreen, maximize, togglesplit, pseudo
     case resizewidth, resizeheight
-    case exec, launcher, showkeys, settings, reload, pause
+    case exec, launcher, spotlight, showkeys, settings, reload, pause
 
     var id: String { rawValue }
 
@@ -62,7 +63,8 @@ enum Action: String, Codable, CaseIterable, Identifiable {
         case .resizewidth: "Resize width"
         case .resizeheight: "Resize height"
         case .exec: "Run command"
-        case .launcher: "App launcher (Spotlight)"
+        case .launcher: "App launcher"
+        case .spotlight: "Spotlight search"
         case .showkeys: "Show keybindings"
         case .settings: "Open settings"
         case .reload: "Reload config"
@@ -85,7 +87,7 @@ enum Action: String, Codable, CaseIterable, Identifiable {
 
 struct Keybind: Codable, Identifiable, Hashable {
     var id = UUID()
-    /// Any of: super, alt, ctrl, shift — plus raw cmd / opt for keys not mapped to SUPER/ALT.
+    /// Any of: super (main modifier), alt (second modifier), ctrl, shift, plus raw cmd / opt.
     var mods: [String]
     var key: String
     var action: Action
@@ -110,15 +112,28 @@ struct Keybind: Codable, Identifiable, Hashable {
 
     static let modOrder = ["super", "ctrl", "alt", "cmd", "opt", "shift"]
 
-    var comboKey: String {
-        let m = Set(mods.map { $0.lowercased() })
-        return Self.modOrder.filter(m.contains).joined(separator: "+") + "+" + key.lowercased()
-    }
-
-    var displayParts: [String] {
-        let m = Set(mods.map { $0.lowercased() })
-        let labels = ["super": "SUPER", "ctrl": "CTRL", "alt": "ALT", "cmd": "⌘", "opt": "⌥", "shift": "SHIFT"]
-        return Self.modOrder.filter(m.contains).compactMap { labels[$0] } + [Keys.display(key)]
+    /// Key caps in Apple's order (⌃ ⌥ ⇧ ⌘), named after the physical keys the
+    /// internal "super"/"alt" names are currently mapped to.
+    func displayParts(_ cfg: Config) -> [String] {
+        var keys = Set<ModKey>()
+        var shift = false
+        for m in mods {
+            switch m.lowercased() {
+            case "super": keys.insert(cfg.superKey)
+            case "alt": keys.insert(cfg.altKey)
+            case "ctrl": keys.insert(.control)
+            case "cmd": keys.insert(.command)
+            case "opt": keys.insert(.option)
+            case "shift": shift = true
+            default: break
+            }
+        }
+        var out: [String] = []
+        if keys.contains(.control) { out.append(ModKey.control.title) }
+        if keys.contains(.option) { out.append(ModKey.option.title) }
+        if shift { out.append("⇧ Shift") }
+        if keys.contains(.command) { out.append(ModKey.command.title) }
+        return out + [Keys.display(key)]
     }
 
     var summary: String {
@@ -131,7 +146,7 @@ struct Keybind: Codable, Identifiable, Hashable {
         }
     }
 
-    /// Maps physical modifier flags back to Hyprland names under the current config.
+    /// Maps physical modifier flags back to the stored names under the current config.
     static func mods(from flags: NSEvent.ModifierFlags, _ cfg: Config) -> [String] {
         var out: [String] = []
         for (phys, raw) in [(ModKey.command, "cmd"), (.option, "opt"), (.control, "ctrl")] where flags.contains(phys.nsFlag) {
@@ -394,10 +409,10 @@ enum Keys {
 
     static func display(_ key: String) -> String {
         let symbols = [
-            "return": "RETURN", "space": "SPACE", "tab": "TAB", "escape": "ESC", "backspace": "⌫",
+            "return": "Return", "space": "Space", "tab": "Tab", "escape": "Esc", "backspace": "⌫",
             "delete": "⌦", "left": "←", "right": "→", "up": "↑", "down": "↓", "minus": "−", "equal": "=",
             "comma": ",", "period": ".", "slash": "/", "backslash": "\\", "semicolon": ";", "quote": "'",
-            "grave": "`", "bracketleft": "[", "bracketright": "]", "pageup": "PG UP", "pagedown": "PG DN",
+            "grave": "`", "bracketleft": "[", "bracketright": "]", "pageup": "Page Up", "pagedown": "Page Down",
         ]
         if key.isEmpty { return "—" }
         return symbols[key.lowercased()] ?? key.uppercased()

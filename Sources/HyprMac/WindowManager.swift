@@ -597,7 +597,8 @@ final class WindowManager {
         case .resizewidth: resizeFocused(dx: resizeAmount(arg), dy: 0)
         case .resizeheight: resizeFocused(dx: 0, dy: resizeAmount(arg))
         case .exec: run(arg)
-        case .launcher: InputTap.postKey(0x31, flags: .maskCommand)  // ⌘-Space
+        case .launcher: AppDelegate.shared?.showLauncher()
+        case .spotlight: InputTap.postKey(0x31, flags: .maskCommand)  // ⌘-Space
         case .showkeys: AppDelegate.shared?.showCheatSheet()
         case .settings: AppDelegate.shared?.showSettings()
         case .reload: ConfigStore.shared.reload()

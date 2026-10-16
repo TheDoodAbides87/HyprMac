@@ -34,21 +34,21 @@ private struct GeneralTab: View {
     var body: some View {
         Form {
             Section {
-                Picker("SUPER key", selection: $store.config.superKey) {
+                Picker("Main modifier", selection: $store.config.superKey) {
                     ForEach(ModKey.allCases) { Text($0.title).tag($0) }
                 }
-                Picker("ALT key", selection: $store.config.altKey) {
+                Picker("Second modifier", selection: $store.config.altKey) {
                     ForEach(ModKey.allCases) { Text($0.title).tag($0) }
                 }
                 if store.config.superKey == store.config.altKey {
-                    Label("SUPER and ALT are the same key, so SUPER+ALT shortcuts will collide.",
+                    Label("Both modifiers are the same key, so shortcuts that use both will collide.",
                           systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
                 }
             } header: {
                 Text("Modifiers")
             } footer: {
-                Text("On a PC keyboard SUPER sits where ⌥ Option is on a Mac, and ALT sits where ⌘ Command is, so the defaults keep Hyprland muscle memory. The trade-off is that SUPER+arrow takes over ⌥-arrow word jumping.")
+                Text("The main modifier is held for every window shortcut, like \(store.config.superKey.title) + ← to move focus. A few shortcuts add the second modifier, like \(store.config.superKey.title) + \(store.config.altKey.title) + F to maximize. With ⌥ Option as the main modifier, ⌥ + arrow no longer jumps between words in text.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
@@ -66,7 +66,7 @@ private struct GeneralTab: View {
             .disabled(false)
 
             Section("Behavior") {
-                Toggle("Mouse bindings: SUPER+drag moves, SUPER+right-drag resizes, SUPER+scroll switches workspace",
+                Toggle("Mouse: hold \(store.config.superKey.title) and drag to move a window, right-drag to resize it, or scroll to switch workspace",
                        isOn: $store.config.mouseBindings)
                 Toggle("Focus follows mouse", isOn: $store.config.focusFollowsMouse)
                 LabeledSlider(title: "Resize step (px)", value: $store.config.resizeStep, range: 20...300, step: 10)
@@ -144,7 +144,7 @@ private struct KeybindingsTab: View {
             }
             .listStyle(.inset(alternatesRowBackgrounds: true))
 
-            Text("Click a shortcut, then press the new combination (Esc cancels). SUPER = \(store.config.superKey.title), ALT = \(store.config.altKey.title). Changes apply immediately.")
+            Text("Click a shortcut, then press the new combination (Esc cancels). Changes apply immediately.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -162,7 +162,7 @@ private struct KeybindingsTab: View {
         guard !q.isEmpty else { return true }
         return b.summary.lowercased().contains(q)
             || b.action.title.lowercased().contains(q)
-            || b.displayParts.joined(separator: " ").lowercased().contains(q)
+            || b.displayParts(store.config).joined(separator: " ").lowercased().contains(q)
     }
 }
 
@@ -212,7 +212,7 @@ private struct KeyRecorder: View {
                         .foregroundStyle(Color.accentColor)
                         .padding(.vertical, 3)
                 } else {
-                    ForEach(Array(bind.displayParts.enumerated()), id: \.offset) { _, part in
+                    ForEach(Array(bind.displayParts(ConfigStore.shared.config).enumerated()), id: \.offset) { _, part in
                         KeyCap(text: part)
                     }
                 }
@@ -277,7 +277,7 @@ private struct RulesTab: View {
     var body: some View {
         HStack(alignment: .top, spacing: 16) {
             BundleList(title: "Always float",
-                       subtitle: "Windows from these apps open floating instead of tiled (SUPER+T still toggles them).",
+                       subtitle: "Windows from these apps open floating instead of tiled. The Toggle floating shortcut still works on them.",
                        items: $store.config.floatApps)
             BundleList(title: "Never manage",
                        subtitle: "HyprMac ignores these apps completely: no tiling, no workspaces.",
@@ -421,7 +421,7 @@ private struct SystemTab: View {
                     Text("• Workspaces are HyprMac's own (like Hyprland), not macOS Spaces. Stay on a single Space per display.")
                     Text("• With several monitors, turn off System Settings › Desktop & Dock › “Displays have separate Spaces” and log out once.")
                     Text("• Turn off “Automatically rearrange Spaces based on most recent use” in the same pane.")
-                    Text("• SUPER+Space sends ⌘Space, so it opens Spotlight, Raycast or Alfred, whichever owns that shortcut.")
+                    Text("• The App launcher shortcut opens HyprMac's own launcher. To use Spotlight, Raycast or Alfred instead, change its action to “Spotlight search”, which sends ⌘ Space.")
                 }
                 .font(.callout)
                 .foregroundStyle(.secondary)
@@ -434,7 +434,7 @@ private struct SystemTab: View {
     }
 }
 
-// MARK: - Cheat sheet (SUPER+K)
+// MARK: - Cheat sheet
 
 struct CheatSheetView: View {
     let config: Config
@@ -443,7 +443,7 @@ struct CheatSheetView: View {
         let b = config.bindings.filter { !$0.key.isEmpty }
         func pick(_ actions: Set<Action>) -> [Keybind] { b.filter { actions.contains($0.action) } }
         return [
-            ("Apps", pick([.exec, .launcher, .showkeys, .settings, .reload, .pause])),
+            ("Apps", pick([.exec, .launcher, .spotlight, .showkeys, .settings, .reload, .pause])),
             ("Windows", pick([.close, .togglefloating, .fullscreen, .maximize, .togglesplit, .pseudo, .focus, .swap, .resizewidth, .resizeheight])),
             ("Workspaces", pick([.workspace, .movetoworkspace, .movetoworkspacesilent, .workspacenext, .workspaceprev, .workspaceformer])),
         ].filter { !$0.1.isEmpty }
@@ -454,7 +454,7 @@ struct CheatSheetView: View {
             HStack {
                 Text("Keybindings").font(.title2.weight(.bold))
                 Spacer()
-                Text("SUPER = \(config.superKey.title)   ALT = \(config.altKey.title)   ·   Esc to close")
+                Text("Esc to close")
                     .font(.caption).foregroundStyle(.secondary)
             }
             ScrollView {
@@ -467,7 +467,7 @@ struct CheatSheetView: View {
                                 .padding(.bottom, 2)
                             ForEach(items) { b in
                                 HStack(spacing: 4) {
-                                    ForEach(Array(b.displayParts.enumerated()), id: \.offset) { _, p in KeyCap(text: p) }
+                                    ForEach(Array(b.displayParts(config).enumerated()), id: \.offset) { _, p in KeyCap(text: p) }
                                     Spacer(minLength: 10)
                                     Text(label(b))
                                         .font(.callout)
@@ -478,9 +478,9 @@ struct CheatSheetView: View {
                             }
                             if title == "Workspaces" && config.mouseBindings {
                                 Divider().padding(.vertical, 4)
-                                mouseRow("SUPER + drag", "Move window")
-                                mouseRow("SUPER + right-drag", "Resize window")
-                                mouseRow("SUPER + scroll", "Cycle workspaces")
+                                mouseRow("\(config.superKey.title) + drag", "Move window")
+                                mouseRow("\(config.superKey.title) + right-drag", "Resize window")
+                                mouseRow("\(config.superKey.title) + scroll", "Cycle workspaces")
                             }
                         }
                         .frame(maxWidth: .infinity, alignment: .topLeading)

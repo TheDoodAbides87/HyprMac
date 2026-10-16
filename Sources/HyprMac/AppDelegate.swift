@@ -8,6 +8,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private var settingsWindow: NSWindow?
     private var cheatPanel: NSPanel?
+    private var launcherPanel: LauncherPanel?
+    private let launcher = LauncherModel()
     private var permissionTimer: Timer?
     private var signalSources: [DispatchSourceSignal] = []
     private let pauseItem = NSMenuItem(title: "Pause Tiling", action: #selector(togglePause), keyEquivalent: "")
@@ -139,6 +141,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         settingsWindow?.contentView = NSHostingView(rootView: SettingsView(store: ConfigStore.shared, tab: tab))
         NSApp.activate(ignoringOtherApps: true)
         settingsWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    func showLauncher() {
+        if let p = launcherPanel, p.isVisible {
+            p.close()
+            return
+        }
+        let panel = LauncherPanel(contentRect: NSRect(x: 0, y: 0, width: 620, height: 420),
+                                  styleMask: [.borderless], backing: .buffered, defer: false)
+        panel.isReleasedWhenClosed = false
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.level = .modalPanel
+        launcher.reset()
+        launcher.onClose = { [weak panel] in panel?.close() }
+        let host = NSHostingView(rootView: LauncherView(model: launcher))
+        host.wantsLayer = true
+        host.layer?.cornerRadius = 16
+        host.layer?.masksToBounds = true
+        panel.contentView = host
+        // Centered horizontally, in the upper third of the screen under the mouse.
+        let mouse = NSEvent.mouseLocation
+        if let screen = NSScreen.screens.first(where: { $0.frame.contains(mouse) }) ?? NSScreen.main {
+            let vf = screen.visibleFrame
+            panel.setFrameOrigin(NSPoint(x: vf.midX - 310, y: vf.maxY - vf.height / 4 - 420))
+        }
+        launcherPanel = panel
+        NSApp.activate(ignoringOtherApps: true)
+        panel.makeKeyAndOrderFront(nil)
     }
 
     func showCheatSheet() {
