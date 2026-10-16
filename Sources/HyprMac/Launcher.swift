@@ -3,12 +3,6 @@ import SwiftUI
 
 /// A keyboard-driven app launcher in the spirit of the ones Hyprland setups use
 /// (walker, wofi, rofi): type to fuzzy-match, arrows to pick, Return to open.
-struct AppEntry: Identifiable {
-    let url: URL
-    let name: String
-    var id: URL { url }
-}
-
 @MainActor
 final class LauncherModel: ObservableObject {
     @Published var query = "" { didSet { filter() } }
@@ -21,7 +15,7 @@ final class LauncherModel: ObservableObject {
     private static let countsKey = "launcherCounts"
 
     func reset() {
-        all = Self.scan()
+        all = AppCatalog.installed(refresh: true)
         query = ""
         filter()
     }
@@ -78,33 +72,6 @@ final class LauncherModel: ObservableObject {
             if !found { return nil }
         }
         return 300 - gaps
-    }
-
-    private static func scan() -> [AppEntry] {
-        let fm = FileManager.default
-        let dirs = ["/Applications", "/Applications/Utilities", "/System/Applications",
-                    "/System/Applications/Utilities", NSHomeDirectory() + "/Applications"]
-        var seen = Set<String>()
-        var out: [AppEntry] = []
-        func add(_ url: URL) {
-            guard seen.insert(url.resolvingSymlinksInPath().path).inserted else { return }
-            let name = (fm.displayName(atPath: url.path) as NSString).deletingPathExtension
-            out.append(AppEntry(url: url, name: name))
-        }
-        for dir in dirs {
-            guard let items = try? fm.contentsOfDirectory(at: URL(fileURLWithPath: dir), includingPropertiesForKeys: nil) else { continue }
-            for item in items {
-                if item.pathExtension == "app" {
-                    add(item)
-                } else if item.lastPathComponent != "Utilities",
-                          let inner = try? fm.contentsOfDirectory(at: item, includingPropertiesForKeys: nil) {
-                    // Apps one folder down, e.g. /Applications/Adobe Photoshop/Adobe Photoshop.app
-                    inner.filter { $0.pathExtension == "app" }.forEach(add)
-                }
-            }
-        }
-        add(URL(fileURLWithPath: "/System/Library/CoreServices/Finder.app"))
-        return out
     }
 }
 

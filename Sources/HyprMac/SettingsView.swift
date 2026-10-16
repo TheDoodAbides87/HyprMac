@@ -68,7 +68,11 @@ private struct GeneralTab: View {
             Section("Behavior") {
                 Toggle("Mouse: hold \(store.config.superKey.title) and drag to move a window, right-drag to resize it, or scroll to switch workspace",
                        isOn: $store.config.mouseBindings)
-                Toggle("Focus follows mouse", isOn: $store.config.focusFollowsMouse)
+                Picker("Focus windows", selection: $store.config.focusFollowsMouse) {
+                    Text("On click").tag(false)
+                    Text("On hover").tag(true)
+                }
+                .pickerStyle(.segmented)
                 LabeledSlider(title: "Resize step (px)", value: $store.config.resizeStep, range: 20...300, step: 10)
             }
         }
@@ -180,10 +184,11 @@ private struct KeybindRow: View {
             }
             .labelsHidden()
             .frame(width: 230)
-            if let hint = bind.action.argHint {
+            if bind.action == .openapp || bind.action == .exec {
+                AppOrCommandField(bind: $bind)
+            } else if let hint = bind.action.argHint {
                 TextField(hint, text: $bind.arg)
                     .textFieldStyle(.roundedBorder)
-                    .font(bind.action == .exec ? .system(.body, design: .monospaced) : .body)
             } else {
                 Spacer()
             }
@@ -197,6 +202,78 @@ private struct KeybindRow: View {
                 .help("Delete binding")
         }
         .padding(.vertical, 2)
+    }
+}
+
+/// "Open app" shows a dropdown of installed apps; the terminal button next to it
+/// switches the binding to a shell command for advanced use, and back.
+private struct AppOrCommandField: View {
+    @Binding var bind: Keybind
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if bind.action == .openapp {
+                appMenu
+                Toggle("New window", isOn: $bind.newWindow)
+                    .toggleStyle(.checkbox)
+                    .fixedSize()
+                    .help("If the app is already open, open a new window instead of just switching to it.")
+                modeButton("terminal", help: "Run a shell command instead") {
+                    let name = AppCatalog.name(for: bind.arg)
+                    bind.action = .exec
+                    bind.arg = name.map { "open -a '\($0)'" } ?? ""
+                }
+            } else {
+                TextField("Shell command, e.g. open -na Ghostty", text: $bind.arg)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.body, design: .monospaced))
+                modeButton("square.grid.2x2", help: "Pick an app instead") {
+                    bind.action = .openapp
+                    bind.arg = ""
+                    bind.newWindow = false
+                }
+            }
+        }
+    }
+
+    private var appMenu: some View {
+        let current = AppCatalog.url(for: bind.arg)
+        return Menu {
+            ForEach(AppCatalog.installed(), id: \.url) { app in
+                if let id = app.bundleID {
+                    Button {
+                        bind.arg = id
+                    } label: {
+                        Label {
+                            Text(app.name)
+                        } icon: {
+                            Image(nsImage: AppCatalog.icon(for: app.url, size: 16))
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                if let current {
+                    Image(nsImage: AppCatalog.icon(for: current, size: 16))
+                    Text(AppCatalog.name(for: bind.arg) ?? bind.arg)
+                } else {
+                    Text(bind.arg.isEmpty ? "Choose an app…" : "Not installed: \(bind.arg)")
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .menuStyle(.button)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func modeButton(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .frame(width: 18)
+        }
+        .buttonStyle(.bordered)
+        .help(help)
     }
 }
 
@@ -443,7 +520,7 @@ struct CheatSheetView: View {
         let b = config.bindings.filter { !$0.key.isEmpty }
         func pick(_ actions: Set<Action>) -> [Keybind] { b.filter { actions.contains($0.action) } }
         return [
-            ("Apps", pick([.exec, .launcher, .spotlight, .showkeys, .settings, .reload, .pause])),
+            ("Apps", pick([.openapp, .exec, .launcher, .spotlight, .showkeys, .settings, .reload, .pause])),
             ("Windows", pick([.close, .togglefloating, .fullscreen, .maximize, .togglesplit, .pseudo, .focus, .swap, .resizewidth, .resizeheight])),
             ("Workspaces", pick([.workspace, .movetoworkspace, .movetoworkspacesilent, .workspacenext, .workspaceprev, .workspaceformer])),
         ].filter { !$0.1.isEmpty }

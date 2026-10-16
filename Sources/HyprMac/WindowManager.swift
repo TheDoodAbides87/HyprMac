@@ -53,6 +53,7 @@ final class WindowManager {
     private var focusPending = false
     private var suppressFocusUntil = Date.distantPast
     private var snapWork: [CGWindowID: DispatchWorkItem] = [:]
+    private var hoverWork: DispatchWorkItem?
     private var lastScrollSwitch = Date.distantPast
     private var tokens: [NSObjectProtocol] = []
     private var timer: Timer?
@@ -596,6 +597,7 @@ final class WindowManager {
             }
         case .resizewidth: resizeFocused(dx: resizeAmount(arg), dy: 0)
         case .resizeheight: resizeFocused(dx: 0, dy: resizeAmount(arg))
+        case .openapp: openApp(arg, newWindow: b.newWindow)
         case .exec: run(arg)
         case .launcher: AppDelegate.shared?.showLauncher()
         case .spotlight: InputTap.postKey(0x31, flags: .maskCommand)  // ⌘-Space
@@ -612,6 +614,21 @@ final class WindowManager {
         case "+", "": return step
         case "-", "−": return -step
         default: return CGFloat(Double(arg) ?? 0)
+        }
+    }
+
+    private func openApp(_ id: String, newWindow: Bool) {
+        guard let url = AppCatalog.url(for: id) else { return }
+        let wasRunning = !NSRunningApplication.runningApplications(withBundleIdentifier: id).isEmpty
+        let conf = NSWorkspace.OpenConfiguration()
+        conf.activates = true
+        NSWorkspace.shared.openApplication(at: url, configuration: conf) { _, _ in }
+        // A running app only comes to the front; ask it for a fresh window with ⌘N.
+        guard newWindow, wasRunning else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            if NSWorkspace.shared.frontmostApplication?.bundleIdentifier == id {
+                InputTap.postKey(0x2D, flags: .maskCommand)
+            }
         }
     }
 
@@ -847,16 +864,34 @@ final class WindowManager {
         apply(w.workspace)
     }
 
+    /// Hover-to-focus. The pointer has to rest on a window briefly, so windows
+    /// crossed on the way somewhere else don't grab focus.
     func focusFollowsMouse(at p: CGPoint) {
         guard cfg.focusFollowsMouse, drag == nil, !paused, NSEvent.pressedMouseButtons == 0 else { return }
+        // Leave focus alone while one of HyprMac's own windows (settings, launcher) is in use.
+        if NSApp.isActive, NSApp.keyWindow != nil { return }
         let vis = visibleWindows
-        if vis.contains(where: { $0.floating && rect($0)?.contains(p) == true }) { return }
-        if let w = vis.first(where: { rect($0)?.contains(p) == true }) {
-            if w.id != focusedWindow()?.id { focus(w) }
-        } else if let m = monitors.first(where: { $0.frame.contains(p) }), m.id != focusedMonitor {
-            focusedMonitor = m.id
-            onStatus?()
+        // Floating windows sit on top, so they win when they overlap a tile.
+        let target = vis.first { $0.floating && rect($0)?.contains(p) == true }
+            ?? vis.first { !$0.floating && rect($0)?.contains(p) == true }
+        hoverWork?.cancel()
+        guard let w = target else {
+            if let m = monitors.first(where: { $0.frame.contains(p) }), m.id != focusedMonitor {
+                focusedMonitor = m.id
+                onStatus?()
+            }
+            return
         }
+        guard w.id != focusedWindow()?.id else { return }
+        let item = DispatchWorkItem {
+            MainActor.assumeIsolated {
+                guard self.windows[w.id] === w, !w.hidden,
+                      self.rect(w)?.contains(mouseLocationAX()) == true else { return }
+                self.focus(w)
+            }
+        }
+        hoverWork = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08, execute: item)
     }
 
     // MARK: - Geometry changes made by the user

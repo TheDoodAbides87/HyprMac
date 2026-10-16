@@ -40,7 +40,7 @@ enum Action: String, Codable, CaseIterable, Identifiable {
     case workspacenext, workspaceprev, workspaceformer
     case close, togglefloating, fullscreen, maximize, togglesplit, pseudo
     case resizewidth, resizeheight
-    case exec, launcher, spotlight, showkeys, settings, reload, pause
+    case openapp, exec, launcher, spotlight, showkeys, settings, reload, pause
 
     var id: String { rawValue }
 
@@ -62,6 +62,7 @@ enum Action: String, Codable, CaseIterable, Identifiable {
         case .pseudo: "Pseudo-tile"
         case .resizewidth: "Resize width"
         case .resizeheight: "Resize height"
+        case .openapp: "Open app"
         case .exec: "Run command"
         case .launcher: "App launcher"
         case .spotlight: "Spotlight search"
@@ -91,16 +92,20 @@ struct Keybind: Codable, Identifiable, Hashable {
     var mods: [String]
     var key: String
     var action: Action
+    /// For "openapp" the bundle identifier; for "exec" the shell command.
     var arg: String
+    /// For "openapp": if the app is already running, open a new window (⌘N) instead of just switching to it.
+    var newWindow = false
 
-    init(_ mods: [String], _ key: String, _ action: Action, _ arg: String = "") {
+    init(_ mods: [String], _ key: String, _ action: Action, _ arg: String = "", newWindow: Bool = false) {
         self.mods = mods
         self.key = key
         self.action = action
         self.arg = arg
+        self.newWindow = newWindow
     }
 
-    enum CodingKeys: String, CodingKey { case mods, key, action, arg }
+    enum CodingKeys: String, CodingKey { case mods, key, action, arg, newWindow }
 
     init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
@@ -108,6 +113,7 @@ struct Keybind: Codable, Identifiable, Hashable {
         key = try c.decode(String.self, forKey: .key)
         action = try c.decode(Action.self, forKey: .action)
         arg = try c.decodeIfPresent(String.self, forKey: .arg) ?? ""
+        newWindow = try c.decodeIfPresent(Bool.self, forKey: .newWindow) ?? false
     }
 
     static let modOrder = ["super", "ctrl", "alt", "cmd", "opt", "shift"]
@@ -141,6 +147,7 @@ struct Keybind: Codable, Identifiable, Hashable {
         case .focus, .swap: "\(action.title) \(arg)"
         case .workspace, .movetoworkspace, .movetoworkspacesilent: "\(action.title) \(arg)"
         case .resizewidth, .resizeheight: "\(action.title) \(arg)"
+        case .openapp: MainActor.assumeIsolated { AppCatalog.name(for: arg) } ?? "Open app"
         case .exec: arg
         default: action.title
         }
@@ -215,12 +222,12 @@ struct Config: Codable, Equatable {
     // Default bindings, modeled on a typical Hyprland setup and translated to macOS apps.
     static func defaultBindings() -> [Keybind] {
         var b: [Keybind] = [
-            .init(["super"], "return", .exec, Apps.terminal),
-            .init(["super", "shift"], "b", .exec, Apps.browser),
-            .init(["super", "shift"], "f", .exec, "open ~"),
-            .init(["super", "shift"], "n", .exec, Apps.editor),
-            .init(["super", "shift"], "m", .exec, Apps.music),
-            .init(["super", "shift"], "t", .exec, "open -a 'Activity Monitor'"),
+            .init(["super"], "return", .openapp, Apps.terminal, newWindow: true),
+            .init(["super", "shift"], "b", .openapp, Apps.browser, newWindow: true),
+            .init(["super", "shift"], "f", .openapp, "com.apple.finder", newWindow: true),
+            .init(["super", "shift"], "n", .openapp, Apps.editor),
+            .init(["super", "shift"], "m", .openapp, Apps.music),
+            .init(["super", "shift"], "t", .openapp, "com.apple.ActivityMonitor"),
             .init(["super"], "space", .launcher),
             .init(["super", "alt"], "space", .settings),
             .init(["super"], "k", .showkeys),
@@ -277,42 +284,36 @@ extension Config {
         resizeStep = try c.decodeIfPresent(Double.self, forKey: .resizeStep) ?? def.resizeStep
         floatApps = try c.decodeIfPresent([String].self, forKey: .floatApps) ?? def.floatApps
         ignoreApps = try c.decodeIfPresent([String].self, forKey: .ignoreApps) ?? def.ignoreApps
-        bindings = try c.decodeIfPresent([Keybind].self, forKey: .bindings) ?? def.bindings
+        bindings = (try c.decodeIfPresent([Keybind].self, forKey: .bindings) ?? def.bindings).map { $0.migrated() }
     }
 }
 
-/// Picks sensible macOS stand-ins for the apps a Hyprland setup usually launches.
-enum Apps {
-    static func installed(_ name: String) -> Bool {
-        ["/Applications", "/System/Applications", NSHomeDirectory() + "/Applications"]
-            .contains { FileManager.default.fileExists(atPath: "\($0)/\(name).app") }
-    }
-
-    static var terminal: String {
-        for (app, cmd) in [
-            ("Ghostty", "open -na Ghostty"),
-            ("Alacritty", "open -na Alacritty"),
-            ("kitty", "open -na kitty"),
-            ("WezTerm", "open -na WezTerm"),
-            ("iTerm", "osascript -e 'tell application \"iTerm\" to create window with default profile'"),
-        ] where installed(app) { return cmd }
-        return "osascript -e 'tell application \"Terminal\" to do script \"\"' -e 'tell application \"Terminal\" to activate'"
-    }
-
-    static var browser: String {
-        for app in ["Chromium", "Google Chrome", "Brave Browser", "Microsoft Edge"] where installed(app) {
-            return "open -na '\(app)' --args --new-window"
+extension Keybind {
+    /// Turns app-launching shell commands from older configs (`open -na Ghostty`,
+    /// `open ~`, …) into "Open app" bindings so they show up as app pickers.
+    func migrated() -> Keybind {
+        guard action == .exec else { return self }
+        let cmd = arg.trimmingCharacters(in: .whitespaces)
+        var b = self
+        func app(_ id: String, newWindow: Bool) -> Keybind {
+            b.action = .openapp
+            b.arg = id
+            b.newWindow = newWindow
+            return b
         }
-        return "open -a Safari"
-    }
+        if cmd == "open ~" { return app("com.apple.finder", newWindow: true) }
+        if cmd.contains("tell application \"Terminal\" to do script") { return app("com.apple.Terminal", newWindow: true) }
+        if cmd.contains("tell application \"iTerm\" to create window") { return app("com.googlecode.iterm2", newWindow: true) }
 
-    static var editor: String {
-        for app in ["Zed", "Visual Studio Code", "Cursor"] where installed(app) { return "open -a '\(app)'" }
-        return "open -a TextEdit"
-    }
-
-    static var music: String {
-        installed("Spotify") ? "open -a Spotify" : "open -a Music"
+        let pattern = #"^open\s+-(n?a|an)\s+(?:'([^']+)'|"([^"]+)"|(\S+))(\s+--args\s+--new-window)?$"#
+        guard let re = try? NSRegularExpression(pattern: pattern),
+              let m = re.firstMatch(in: cmd, range: NSRange(cmd.startIndex..., in: cmd)) else { return self }
+        func group(_ i: Int) -> String? { Range(m.range(at: i), in: cmd).map { String(cmd[$0]) } }
+        guard let name = group(2) ?? group(3) ?? group(4),
+              let entry = MainActor.assumeIsolated({ AppCatalog.installed().first { $0.name == name || $0.url.deletingPathExtension().lastPathComponent == name } }),
+              let id = entry.bundleID else { return self }
+        let newWindow = group(1)?.contains("n") == true || group(5) != nil
+        return app(id, newWindow: newWindow)
     }
 }
 

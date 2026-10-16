@@ -8,6 +8,7 @@ A small native tiling window manager for macOS that brings Hyprland's tiling beh
 - **Gaps and an active border.** The defaults match a typical Hyprland config: `gaps_in 5`, `gaps_out 10`, and a 2 px border.
 - **A built-in app launcher** (⌥ Option + Space): type, use the arrow keys, and press Return.
 - **Menu-bar workspace indicator**, similar to Waybar's.
+- **Click or hover to focus.** Choose in Settings › General whether a window takes focus when you click it (the macOS default) or when the pointer rests on it.
 - **A settings window** for every option. You can record shortcuts by pressing them, change the action for any key, set float/ignore rules for apps, and turn on launch at login.
 
 It doesn't need SIP turned off and has no dependencies. It's built from Swift source with the Command Line Tools.
@@ -28,7 +29,7 @@ Window shortcuts use **⌥ Option** as the main modifier. A few also add **⌘ C
 
 | Shortcut | Action |
 |---|---|
-| ⌥ Option + Return | Terminal (Ghostty / Alacritty / kitty / WezTerm / iTerm / Terminal, whichever is installed) |
+| ⌥ Option + Return | Terminal (Ghostty / Alacritty / kitty / WezTerm / iTerm / Terminal, whichever is installed), new window |
 | ⌥ Option + Space | App launcher (change the action to “Spotlight search” to use Spotlight / Raycast / Alfred) |
 | ⌥ Option + ⌘ Command + Space | HyprMac settings |
 | ⌥ Option + K | Keybinding cheat sheet |
@@ -58,7 +59,13 @@ You can also drag a tiled window by its title bar and drop it on another window 
 
 Everything is stored in `~/.config/hyprmac/config.json`. The settings window writes to this file and applies each change straight away. You can also edit the JSON by hand and choose **Reload Config** from the menu bar.
 
-Exec bindings run through `zsh -c`, with Homebrew on the `PATH`. For example:
+App shortcuts are picked from a dropdown of installed apps in Settings › Keybindings. Tick **New window** to get a fresh window (⌘N) when the app is already open. For anything else, click the terminal button beside the dropdown and enter a shell command. Commands run through `zsh -c`, with Homebrew on the `PATH`. In the JSON, an app shortcut looks like this:
+
+```json
+{ "mods": ["super"], "key": "return", "action": "openapp", "arg": "com.mitchellh.ghostty", "newWindow": true }
+```
+
+And a command shortcut looks like this:
 
 ```json
 { "mods": ["super", "shift"], "key": "g", "action": "exec", "arg": "open -na Ghostty --args -e lazygit" }
@@ -83,6 +90,7 @@ In the JSON, `super` means the main modifier and `alt` means the second modifier
 | `Config.swift` | Config model, default bindings, JSON store, key names |
 | `SettingsView.swift` | SwiftUI settings window and keybinding cheat sheet |
 | `Launcher.swift` | Built-in app launcher |
+| `Apps.swift` | Installed-app catalog and default apps |
 | `AppDelegate.swift` | Menu-bar item, permission flow, window plumbing |
 
 ## License
