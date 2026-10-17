@@ -179,6 +179,7 @@ struct Config: Codable, Equatable {
     var activeBorderColor = "#33CCFF"
     var mouseBindings = true
     var focusFollowsMouse = false
+    var screenshotWorkspace = true
     var resizeStep: Double = 100
     var floatApps: [String] = [
         "com.apple.systempreferences",
@@ -281,6 +282,7 @@ extension Config {
         activeBorderColor = try c.decodeIfPresent(String.self, forKey: .activeBorderColor) ?? def.activeBorderColor
         mouseBindings = try c.decodeIfPresent(Bool.self, forKey: .mouseBindings) ?? def.mouseBindings
         focusFollowsMouse = try c.decodeIfPresent(Bool.self, forKey: .focusFollowsMouse) ?? def.focusFollowsMouse
+        screenshotWorkspace = try c.decodeIfPresent(Bool.self, forKey: .screenshotWorkspace) ?? def.screenshotWorkspace
         resizeStep = try c.decodeIfPresent(Double.self, forKey: .resizeStep) ?? def.resizeStep
         floatApps = try c.decodeIfPresent([String].self, forKey: .floatApps) ?? def.floatApps
         ignoreApps = try c.decodeIfPresent([String].self, forKey: .ignoreApps) ?? def.ignoreApps

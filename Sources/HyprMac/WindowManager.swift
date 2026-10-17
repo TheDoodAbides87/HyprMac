@@ -73,6 +73,14 @@ final class WindowManager {
         let floatFrame: CGRect?
     }
     private var remembered: [CGWindowID: Memory] = [:]
+
+    /// The screenshot editor (opened by clicking the thumbnail) belongs to this
+    /// background process, which HyprMac doesn't otherwise manage.
+    private static let screenshotBundle = "com.apple.screencaptureui"
+    /// Where to go back to when the screenshot editor closes.
+    private var screenshotReturn: (workspace: Int, empty: Int, monitor: CGDirectDisplayID)?
+    private var screenshotTimer: Timer?
+    private var handledScreenshotEditor: CGWindowID?
     private var timer: Timer?
     private let border = BorderOverlay()
 
@@ -154,6 +162,9 @@ final class WindowManager {
         tokens.append(dnc.addObserver(forName: NSNotification.Name("com.apple.screenIsUnlocked"), object: nil, queue: .main) { _ in
             MainActor.assumeIsolated { self.wakeUp() }
         })
+        screenshotTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
+            MainActor.assumeIsolated { self.checkScreenshotEditor() }
+        }
         // Safety net for apps that don't post AX notifications reliably.
         timer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { _ in
             MainActor.assumeIsolated { self.refresh() }
@@ -212,6 +223,67 @@ final class WindowManager {
         for w in windows.values where w.hidden { AX.setPosition(w.el, corner) }
         invalidateFrames()
         refresh()
+    }
+
+    // MARK: - Screenshot editor
+
+    /// The editor's window, if one is open. macOS starts a new screenshot
+    /// process for every capture and never reports it as activating, so the
+    /// window itself is what HyprMac looks for. The capture overlay and the
+    /// thumbnail belong to the same process but sit on a higher layer or are
+    /// much smaller.
+    private func findScreenshotEditor() -> (id: CGWindowID, pid: pid_t, frame: CGRect)? {
+        let pids = Set(NSRunningApplication.runningApplications(withBundleIdentifier: Self.screenshotBundle).map(\.processIdentifier))
+        guard !pids.isEmpty,
+              let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+                as? [[String: Any]] else { return nil }
+        for info in list {
+            guard let pid = (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value, pids.contains(pid),
+                  let layer = (info[kCGWindowLayer as String] as? NSNumber)?.intValue, (0..<20).contains(layer),
+                  let bounds = info[kCGWindowBounds as String] as? NSDictionary,
+                  let r = CGRect(dictionaryRepresentation: bounds), r.width >= 400, r.height >= 300,
+                  let id = (info[kCGWindowNumber as String] as? NSNumber)?.uint32Value else { continue }
+            return (id, pid, r)
+        }
+        return nil
+    }
+
+    /// Runs twice a second: notices the editor opening and closing.
+    private func checkScreenshotEditor() {
+        guard started, !paused, !asleep else { return }
+        let editor = cfg.screenshotWorkspace ? findScreenshotEditor() : nil
+        if let editor {
+            // Act once per editor window, so switching away while it's open sticks.
+            guard editor.id != handledScreenshotEditor else { return }
+            handledScreenshotEditor = editor.id
+            openScreenshotWorkspace(editor.pid, editor: editor.frame)
+        } else if handledScreenshotEditor != nil {
+            handledScreenshotEditor = nil
+            screenshotEditorClosed()
+        }
+    }
+
+    /// Clear the editor's display by switching to an empty workspace. The editor
+    /// isn't tiled, so it stays put while the tiles are parked.
+    private func openScreenshotWorkspace(_ pid: pid_t, editor r: CGRect) {
+        let m = monitors.first { $0.frame.contains(r.center) }?.id ?? focusedMonitor
+        let current = activeWorkspace(on: m)
+        guard !windows(in: current).isEmpty,  // already on an empty one
+              let empty = (1...10).first(where: { windows(in: $0).isEmpty && monitorShowing($0) == nil }) else { return }
+        screenshotReturn = (current, empty, m)
+        focusedMonitor = m
+        switchTo(empty, focus: false)
+        NSRunningApplication(processIdentifier: pid)?.activate()
+    }
+
+    /// When the editor closes, go back, but only if you're still on that
+    /// workspace and haven't opened anything there.
+    private func screenshotEditorClosed() {
+        guard let ret = screenshotReturn else { return }
+        screenshotReturn = nil
+        guard activeWorkspace(on: ret.monitor) == ret.empty, windows(in: ret.empty).isEmpty else { return }
+        focusedMonitor = ret.monitor
+        switchTo(ret.workspace)
     }
 
     /// Bring every parked window back on screen (used on quit and pause).
@@ -489,7 +561,7 @@ final class WindowManager {
         suppressFocusUntil = Date().addingTimeInterval(seconds)
     }
 
-    func switchTo(_ n: Int) {
+    func switchTo(_ n: Int, focus: Bool = true) {
         guard (1...10).contains(n) else { return }
         if let m = monitorShowing(n) {
             focusedMonitor = m
@@ -507,7 +579,7 @@ final class WindowManager {
         lastShown[m] = n
         workspaces[n]?.monitor = m
         apply(n)
-        focusWorkspace(n)
+        if focus { focusWorkspace(n) } else { border.hide() }
         onStatus?()
     }
 

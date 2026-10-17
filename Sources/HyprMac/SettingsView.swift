@@ -73,6 +73,8 @@ private struct GeneralTab: View {
                     Text("On hover").tag(true)
                 }
                 .pickerStyle(.segmented)
+                Toggle("Open screenshots on an empty workspace", isOn: $store.config.screenshotWorkspace)
+                    .help("When you click a screenshot thumbnail to edit it, switch to an empty workspace, and switch back when you're done.")
                 LabeledSlider(title: "Resize step (px)", value: $store.config.resizeStep, range: 20...300, step: 10)
             }
         }
