@@ -99,7 +99,7 @@ struct LauncherView: View {
                         LazyVStack(spacing: 2) {
                             // Rows are identified by app, not position, so a row never
                             // keeps showing a stale app after the results change.
-                            ForEach(Array(model.results.prefix(60).enumerated()), id: \.element.id) { i, e in
+                            ForEach(Array(model.results.enumerated()), id: \.element.id) { i, e in
                                 row(i, e)
                             }
                         }
