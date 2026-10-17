@@ -96,6 +96,30 @@ enum Dwindle {
         return nil
     }
 
+    /// The split that forms one edge of `node`'s tile: its right/bottom edge when
+    /// `farEdge` (the node is in that split's first half), its left/top edge otherwise.
+    static func edgeSplit(of node: Node, vertical: Bool, farEdge: Bool) -> Node? {
+        var child = node
+        var p = node.parent
+        while let cur = p {
+            if cur.vertical == vertical && (cur.first === child) == farEdge { return cur }
+            child = cur
+            p = cur.parent
+        }
+        return nil
+    }
+
+    /// Moves one edge of `node`'s tile by `delta` points, so it follows the pointer.
+    /// Falls back to the opposite edge when the tile touches the screen edge on that side.
+    static func moveEdge(of node: Node, vertical: Bool, farEdge: Bool, by delta: CGFloat) {
+        guard delta != 0,
+              let split = edgeSplit(of: node, vertical: vertical, farEdge: farEdge)
+                ?? edgeSplit(of: node, vertical: vertical, farEdge: !farEdge) else { return }
+        let length = vertical ? split.rect.width : split.rect.height
+        guard length > 0 else { return }
+        split.ratio = min(0.9, max(0.1, split.ratio + delta / length))
+    }
+
     private static func replace(_ old: Node, with new: Node, in ws: Workspace) {
         if let p = old.parent {
             if p.first === old { p.first = new } else { p.second = new }

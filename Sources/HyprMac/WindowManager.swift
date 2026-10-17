@@ -90,6 +90,9 @@ final class WindowManager {
         let start: CGPoint
         let startFrame: CGRect
         var last: CGPoint
+        /// For resizing: which edges were grabbed (the ones nearest the pointer).
+        let grabRight: Bool
+        let grabBottom: Bool
     }
     private var drag: DragState?
 
@@ -1015,7 +1018,9 @@ final class WindowManager {
         guard !paused, let w = window(at: p) else { return }
         focus(w)
         AX.raise(w.el)
-        drag = DragState(w: w, resize: resize, start: p, startFrame: AX.frame(w.el) ?? .zero, last: p)
+        let frame = AX.frame(w.el) ?? .zero
+        drag = DragState(w: w, resize: resize, start: p, startFrame: frame, last: p,
+                         grabRight: p.x >= frame.midX, grabBottom: p.y >= frame.midY)
     }
 
     func dragMoved(to p: CGPoint) {
@@ -1029,8 +1034,10 @@ final class WindowManager {
                 d.w.floatFrame = f
                 d.w.lastSet = f
                 AX.setSize(d.w.el, f.size)
-            } else {
-                resizeTiled(d.w, dx: p.x - d.last.x, dy: p.y - d.last.y)
+            } else if let leaf = workspaces[d.w.workspace]?.root?.find(d.w.id) {
+                // The grabbed edges follow the pointer, like Hyprland.
+                Dwindle.moveEdge(of: leaf, vertical: true, farEdge: d.grabRight, by: p.x - d.last.x)
+                Dwindle.moveEdge(of: leaf, vertical: false, farEdge: d.grabBottom, by: p.y - d.last.y)
                 apply(d.w.workspace)
             }
         } else {
