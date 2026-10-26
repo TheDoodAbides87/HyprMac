@@ -14,13 +14,24 @@ A small native tiling window manager for macOS that brings Hyprland's tiling beh
 
 It doesn't need SIP turned off and has no dependencies. It's built from Swift source with the Command Line Tools.
 
-## Build & run
+## Install
+
+1. Download the latest `HyprMac-<version>.dmg` from [Releases](https://github.com/TheDoodAbides87/HyprMac/releases).
+2. Open it and drag **HyprMac** into **Applications**.
+3. Open HyprMac. It isn't notarized by Apple, so the first time macOS blocks it: go to **System Settings › Privacy & Security**, scroll down and click **Open Anyway**.
+4. When asked, allow HyprMac under **Privacy & Security › Accessibility**. Tiling starts as soon as you do.
+
+Requires macOS 14 or later.
+
+## Build from source
 
 ```bash
 ./build.sh --install
 ```
 
 This builds `build/HyprMac.app`, copies it to `~/Applications`, and launches it. The first time it runs, macOS asks you to grant **Accessibility** access. HyprMac starts tiling as soon as you allow it.
+
+To package the disk image for sharing, add `--dmg`. That writes `build/HyprMac-<version>.dmg`, with the drag-to-Applications window. Arranging that window asks Finder, which macOS may ask you to allow once.
 
 > The first build creates a self-signed certificate in its own keychain file at `~/.config/hyprmac/signing/`. It isn't added to your login keychain or marked as trusted. Signing every build with it means macOS recognises rebuilds as the same app, so the Accessibility permission stays valid.
 

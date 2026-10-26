@@ -1,7 +1,20 @@
 #!/bin/zsh
-# Builds HyprMac.app. Pass --install to copy it into ~/Applications and launch it.
+# Builds HyprMac.app.
+#   --install  copy it into ~/Applications and launch it
+#   --dmg      also package it as build/HyprMac-<version>.dmg for sharing
 set -euo pipefail
 cd "${0:A:h}"
+
+VERSION=0.4.4-beta
+INSTALL=0
+DMG=0
+for arg in "$@"; do
+    case $arg in
+        --install) INSTALL=1 ;;
+        --dmg) DMG=1 ;;
+        *) echo "Unknown option: $arg (use --install and/or --dmg)" >&2; exit 2 ;;
+    esac
+done
 
 swift build -c release
 APP=build/HyprMac.app
@@ -30,7 +43,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundleExecutable</key><string>HyprMac</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.4.4-beta</string>
+    <key>CFBundleShortVersionString</key><string>$VERSION</string>
     <key>CFBundleVersion</key><string>1</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>LSUIElement</key><true/>
@@ -76,7 +89,7 @@ security unlock-keychain -p hyprmac $KEYCHAIN
 codesign --force --keychain $KEYCHAIN --sign "$IDENTITY" "$APP"
 echo "Built $PWD/$APP"
 
-if [[ "${1:-}" == "--install" ]]; then
+if (( INSTALL )); then
     pkill -x HyprMac 2>/dev/null && sleep 1 || true
     mkdir -p ~/Applications
     rm -rf ~/Applications/HyprMac.app
@@ -91,4 +104,65 @@ if [[ "${1:-}" == "--install" ]]; then
     done
     pgrep -x HyprMac >/dev/null || { echo "Couldn't launch HyprMac; open it from ~/Applications." >&2; exit 1; }
     echo "Installed to ~/Applications/HyprMac.app and launched."
+fi
+
+if (( DMG )); then
+    # A disk image with the app, a shortcut to Applications and a background
+    # that says to drag one onto the other: the usual Mac installer.
+    VOL=HyprMac
+    OUT="build/HyprMac-$VERSION.dmg"
+    STAGE=build/dmg
+    RW=build/dmg-rw.dmg
+    rm -rf "$STAGE" "$RW" "$OUT"
+    mkdir -p "$STAGE/.background"
+    cp -R "$APP" "$STAGE/"
+    ln -s /Applications "$STAGE/Applications"
+    swift Tools/make-dmg-background.swift build/dmg-bg.png 1
+    swift Tools/make-dmg-background.swift build/dmg-bg@2x.png 2
+    tiffutil -cathidpicheck build/dmg-bg.png build/dmg-bg@2x.png -out "$STAGE/.background/background.tiff" >/dev/null 2>&1
+
+    [[ -d /Volumes/$VOL ]] && { hdiutil detach "/Volumes/$VOL" -quiet || hdiutil detach "/Volumes/$VOL" -force -quiet; }
+    hdiutil create -quiet -ov -srcfolder "$STAGE" -volname "$VOL" -fs HFS+ -format UDRW "$RW"
+    MOUNT=$(hdiutil attach -readwrite -noverify -noautoopen "$RW" | awk -F'\t' '/\/Volumes\//{print $NF}')
+
+    # Lay out the window. This asks Finder, which macOS may ask you to allow once;
+    # without it the disk image still works, just with Finder's default layout.
+    if ! osascript >/dev/null <<APPLESCRIPT
+tell application "Finder"
+    tell disk "$VOL"
+        open
+        set current view of container window to icon view
+        set toolbar visible of container window to false
+        set statusbar visible of container window to false
+        set the bounds of container window to {200, 120, 860, 548}
+        set opts to the icon view options of container window
+        set arrangement of opts to not arranged
+        set icon size of opts to 128
+        set text size of opts to 13
+        set background picture of opts to file ".background:background.tiff"
+        set position of item "HyprMac.app" of container window to {165, 190}
+        set position of item "Applications" of container window to {495, 190}
+        close
+        open
+        update without registering applications
+        delay 1
+        close
+    end tell
+end tell
+APPLESCRIPT
+    then
+        echo "Note: couldn't arrange the installer window (Finder automation not allowed); the disk image still works."
+    fi
+
+    sync
+    # Disk icon. Added last: Finder deletes it while saving the window layout.
+    cp "$APP/Contents/Resources/AppIcon.icns" "$MOUNT/.VolumeIcon.icns"
+    SetFile -a C "$MOUNT"
+
+    sync
+    hdiutil detach "$MOUNT" -quiet || { sleep 2; hdiutil detach "$MOUNT" -force -quiet; }
+    hdiutil convert "$RW" -quiet -format UDZO -imagekey zlib-level=9 -o "$OUT"
+    rm -rf "$RW" "$STAGE"
+    codesign --force --keychain $KEYCHAIN --sign "$IDENTITY" "$OUT"
+    echo "Built $PWD/$OUT"
 fi
