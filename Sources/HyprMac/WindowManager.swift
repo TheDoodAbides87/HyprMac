@@ -54,6 +54,7 @@ final class WindowManager {
     private var suppressFocusUntil = Date.distantPast
     private var snapWork: [CGWindowID: DispatchWorkItem] = [:]
     private var hoverWork: DispatchWorkItem?
+    private var floatRaiseWork: [DispatchWorkItem] = []
     private var lastHoverCheck = Date.distantPast
     private var lastScrollSwitch = Date.distantPast
     private var tokens: [NSObjectProtocol] = []
@@ -521,6 +522,11 @@ final class WindowManager {
         w.floating = memory?.floating ?? shouldFloat(el, bundle: bundle)
         if w.floating {
             w.floatFrame = memory?.floatFrame ?? frame
+            // New floating windows open centered on their workspace's screen.
+            if memory == nil, !initial,
+               let m = (monitorShowing(n) ?? ws.monitor).flatMap(monitor) ?? monitor(focusedMonitor) {
+                w.floatFrame = centered(frame.size, in: m.visible)
+            }
         } else {
             Dwindle.insert(ws, id, near: initial ? nil : ws.focused)
         }
@@ -735,6 +741,31 @@ final class WindowManager {
         return windows[id]
     }
 
+    /// A frame of `size` (shrunk to fit if needed) centered in `area`.
+    private func centered(_ size: CGSize, in area: CGRect) -> CGRect {
+        let s = CGSize(width: min(size.width, area.width * 0.9), height: min(size.height, area.height * 0.9))
+        return CGRect(x: area.midX - s.width / 2, y: area.midY - s.height / 2, width: s.width, height: s.height)
+    }
+
+    /// Keep floating windows above the tiles. macOS doesn't let HyprMac pin other
+    /// apps' windows on top, so whenever a tile takes focus, the floating windows
+    /// on screen are raised back over it (without taking focus). Floating windows
+    /// of the tile's own app are skipped, since raising those could steal focus.
+    private func raiseFloatingWindows() {
+        floatRaiseWork.forEach { $0.cancel() }
+        // Twice: once the tile's app has come forward, and again in case it was slow.
+        floatRaiseWork = [0.06, 0.3].map { delay in
+            let item = DispatchWorkItem {
+                MainActor.assumeIsolated {
+                    guard let tile = self.focusedWindow(), !tile.floating, !tile.hidden else { return }
+                    for w in self.visibleWindows where w.floating && w.pid != tile.pid { AX.raise(w.el) }
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
+            return item
+        }
+    }
+
     private func focus(_ w: ManagedWindow) {
         workspaces[w.workspace]?.focused = w.id
         if let m = monitorShowing(w.workspace) { focusedMonitor = m }
@@ -744,6 +775,7 @@ final class WindowManager {
         AX.raise(w.el)
         AX.setBool(w.el, kAXMainAttribute, true)
         NSRunningApplication(processIdentifier: w.pid)?.activate()
+        if !w.floating { raiseFloatingWindows() }
         onStatus?()
     }
 
@@ -781,8 +813,11 @@ final class WindowManager {
             focusedMonitor = target
             switchTo(w.workspace)
         }
+        let changed = workspaces[w.workspace]?.focused != id
         workspaces[w.workspace]?.focused = id
         if let m = monitorShowing(w.workspace) { focusedMonitor = m }
+        // A tile was clicked or ⌘-Tabbed to: put the floating windows back on top.
+        if changed && !w.floating { raiseFloatingWindows() }
         updateBorder()
         onStatus?()
     }
