@@ -75,6 +75,16 @@ final class WindowManager {
     }
     private var remembered: [CGWindowID: Memory] = [:]
 
+    /// The workspace each app was last used on (by bundle ID), kept across
+    /// restarts in ~/.config/hyprmac/state.json, for "Last used" app rules.
+    private var lastWorkspace: [String: Int] = [:]
+    private let stateURL = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".config/hyprmac/state.json")
+    /// Apps HyprMac opened at startup: their windows go to their workspace quietly.
+    private var startupLaunches = Set<String>()
+    /// A workspace to switch to once the current refresh finishes.
+    private var pendingSwitch: Int?
+
     /// The screenshot editor (opened by clicking the thumbnail) belongs to this
     /// background process, which HyprMac doesn't otherwise manage.
     private static let screenshotBundle = "com.apple.screencaptureui"
@@ -174,9 +184,57 @@ final class WindowManager {
             MainActor.assumeIsolated { self.refresh() }
         }
 
+        loadState()
         started = true
         refresh(initial: true)
         syncFocus()
+        launchStartupApps()
+    }
+
+    // MARK: - App workspace rules
+
+    private struct State: Codable {
+        var lastWorkspace: [String: Int] = [:]
+    }
+
+    private func loadState() {
+        guard let data = try? Data(contentsOf: stateURL),
+              let state = try? JSONDecoder().decode(State.self, from: data) else { return }
+        lastWorkspace = state.lastWorkspace
+    }
+
+    private func saveState() {
+        let enc = JSONEncoder()
+        enc.outputFormatting = [.prettyPrinted, .sortedKeys]
+        guard let data = try? enc.encode(State(lastWorkspace: lastWorkspace)) else { return }
+        try? FileManager.default.createDirectory(at: stateURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: stateURL, options: .atomic)
+    }
+
+    private func noteWorkspace(_ bundle: String, _ n: Int) {
+        guard !bundle.isEmpty, lastWorkspace[bundle] != n else { return }
+        lastWorkspace[bundle] = n
+        saveState()
+    }
+
+    /// Where a launching app's first window should go, if it has a rule.
+    private func ruleWorkspace(for bundle: String) -> Int? {
+        guard let rule = cfg.appRules.first(where: { $0.bundleID == bundle }) else { return nil }
+        let n = rule.workspace > 0 ? rule.workspace : lastWorkspace[bundle]
+        return n.flatMap { (1...10).contains($0) ? $0 : nil }
+    }
+
+    /// Opens the apps marked "Open at startup" that aren't running yet, in the
+    /// background; their windows go to their workspaces without switching.
+    private func launchStartupApps() {
+        for rule in cfg.appRules where rule.launchAtStartup && !rule.bundleID.isEmpty {
+            guard NSRunningApplication.runningApplications(withBundleIdentifier: rule.bundleID).isEmpty,
+                  let url = AppCatalog.url(for: rule.bundleID) else { continue }
+            startupLaunches.insert(rule.bundleID)
+            let conf = NSWorkspace.OpenConfiguration()
+            conf.activates = false
+            NSWorkspace.shared.openApplication(at: url, configuration: conf) { _, _ in }
+        }
     }
 
     // MARK: - Sleep, lock and wake
@@ -415,6 +473,10 @@ final class WindowManager {
             }
         }
         applyAll()
+        if let n = pendingSwitch {
+            pendingSwitch = nil
+            switchTo(n)
+        }
         if focusPending {
             focusPending = false
             syncFocus()
@@ -443,7 +505,17 @@ final class WindowManager {
             n = a
         }
         let memory = remembered.removeValue(forKey: id)
-        if let memory { n = memory.workspace }
+        if let memory {
+            n = memory.workspace
+        } else if !initial, !windows.values.contains(where: { $0.pid == pid }),
+                  let target = ruleWorkspace(for: bundle) {
+            // The app's first window: open it on the app's workspace, and go
+            // there too unless HyprMac launched it quietly at startup.
+            n = target
+            if !startupLaunches.contains(bundle) { pendingSwitch = target }
+        }
+        startupLaunches.remove(bundle)
+        noteWorkspace(bundle, n)
         let ws = workspaces[n]!
         let w = ManagedWindow(id: id, pid: pid, el: el, bundleID: bundle, workspace: n)
         w.floating = memory?.floating ?? shouldFloat(el, bundle: bundle)
@@ -452,6 +524,8 @@ final class WindowManager {
         } else {
             Dwindle.insert(ws, id, near: initial ? nil : ws.focused)
         }
+        // Switching to the app's workspace should land on its new window.
+        if pendingSwitch == n { ws.focused = id }
         windows[id] = w
         if let obs = observers[pid] {
             for note in [kAXUIElementDestroyedNotification, kAXWindowMovedNotification, kAXWindowResizedNotification] {
@@ -919,6 +993,7 @@ final class WindowManager {
         if src.focused == w.id { src.focused = nil }
         if src.fullscreen == w.id { src.fullscreen = nil }
         w.workspace = n
+        noteWorkspace(w.bundleID, n)
         if !w.floating { Dwindle.insert(dst, w.id, near: dst.focused) }
         dst.focused = w.id
         w.lastSet = nil

@@ -5,7 +5,7 @@
 set -euo pipefail
 cd "${0:A:h}"
 
-VERSION=0.4.4-beta
+VERSION=0.5.0-beta
 INSTALL=0
 DMG=0
 for arg in "$@"; do

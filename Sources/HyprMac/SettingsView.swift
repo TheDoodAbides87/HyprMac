@@ -16,6 +16,8 @@ struct SettingsView: View {
                 .tabItem { Label("General", systemImage: "slider.horizontal.3") }.tag(0)
             KeybindingsTab(store: store)
                 .tabItem { Label("Keybindings", systemImage: "keyboard") }.tag(1)
+            AppWorkspacesTab(store: store)
+                .tabItem { Label("App Workspaces", systemImage: "square.grid.3x3") }.tag(4)
             RulesTab(store: store)
                 .tabItem { Label("Window Rules", systemImage: "macwindow.on.rectangle") }.tag(2)
             SystemTab(store: store)
@@ -215,7 +217,7 @@ private struct AppOrCommandField: View {
     var body: some View {
         HStack(spacing: 8) {
             if bind.action == .openapp {
-                appMenu
+                AppPicker(bundleID: $bind.arg)
                 Toggle("New window", isOn: $bind.newWindow)
                     .toggleStyle(.checkbox)
                     .fixedSize()
@@ -238,13 +240,27 @@ private struct AppOrCommandField: View {
         }
     }
 
-    private var appMenu: some View {
-        let current = AppCatalog.url(for: bind.arg)
-        return Menu {
+    private func modeButton(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .frame(width: 18)
+        }
+        .buttonStyle(.bordered)
+        .help(help)
+    }
+}
+
+/// A dropdown of installed apps, with icons. Stores the app's bundle ID.
+struct AppPicker: View {
+    @Binding var bundleID: String
+
+    var body: some View {
+        let current = AppCatalog.url(for: bundleID)
+        Menu {
             ForEach(AppCatalog.installed(), id: \.url) { app in
                 if let id = app.bundleID {
                     Button {
-                        bind.arg = id
+                        bundleID = id
                     } label: {
                         Label {
                             Text(app.name)
@@ -258,24 +274,15 @@ private struct AppOrCommandField: View {
             HStack(spacing: 6) {
                 if let current {
                     Image(nsImage: AppCatalog.icon(for: current, size: 16))
-                    Text(AppCatalog.name(for: bind.arg) ?? bind.arg)
+                    Text(AppCatalog.name(for: bundleID) ?? bundleID)
                 } else {
-                    Text(bind.arg.isEmpty ? "Choose an app…" : "Not installed: \(bind.arg)")
+                    Text(bundleID.isEmpty ? "Choose an app…" : "Not installed: \(bundleID)")
                         .foregroundStyle(.secondary)
                 }
             }
         }
         .menuStyle(.button)
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func modeButton(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .frame(width: 18)
-        }
-        .buttonStyle(.bordered)
-        .help(help)
     }
 }
 
@@ -345,6 +352,83 @@ struct KeyCap: View {
             .padding(.vertical, 3)
             .background(RoundedRectangle(cornerRadius: 4).fill(Color.secondary.opacity(0.15)))
             .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.secondary.opacity(0.3), lineWidth: 0.5))
+    }
+}
+
+// MARK: - App workspaces
+
+private struct AppWorkspacesTab: View {
+    @ObservedObject var store: ConfigStore
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Open apps on their own workspace").font(.headline)
+                    Text("When an app starts, its first window opens on the workspace you pick here and HyprMac switches to it. “Last used” means the workspace where you last used that app.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                Button {
+                    store.config.appRules.append(AppRule())
+                } label: {
+                    Label("Add App", systemImage: "plus")
+                }
+            }
+
+            if store.config.appRules.isEmpty {
+                Text("No apps yet. Click Add App to choose one.")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                HStack(spacing: 10) {
+                    Text("App").frame(maxWidth: .infinity, alignment: .leading)
+                    Text("Workspace").frame(width: 150, alignment: .leading)
+                    Text("Open at startup").frame(width: 120, alignment: .leading)
+                    Spacer().frame(width: 20)
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 8)
+
+                List {
+                    ForEach($store.config.appRules) { $rule in
+                        HStack(spacing: 10) {
+                            AppPicker(bundleID: $rule.bundleID)
+                            Picker("", selection: $rule.workspace) {
+                                Text("Last used").tag(0)
+                                Divider()
+                                ForEach(1...10, id: \.self) { Text("Workspace \($0)").tag($0) }
+                            }
+                            .labelsHidden()
+                            .frame(width: 150)
+                            Toggle("", isOn: $rule.launchAtStartup)
+                                .toggleStyle(.checkbox)
+                                .labelsHidden()
+                                .frame(width: 120, alignment: .leading)
+                                .help("Open this app when HyprMac starts")
+                            Button {
+                                store.config.appRules.removeAll { $0.id == rule.id }
+                            } label: {
+                                Image(systemName: "trash")
+                            }
+                            .buttonStyle(.borderless)
+                            .frame(width: 20)
+                            .help("Remove")
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+                .listStyle(.inset(alternatesRowBackgrounds: true))
+            }
+
+            Text("“Open at startup” opens the app in the background whenever HyprMac starts. To have that happen when you log in, turn on Launch HyprMac at login in the System tab.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(8)
     }
 }
 

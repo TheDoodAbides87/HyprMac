@@ -171,6 +171,32 @@ struct Keybind: Codable, Identifiable, Hashable {
     }
 }
 
+// MARK: - App workspace rules
+
+/// Where an app's windows open when it's launched, and whether HyprMac opens it on startup.
+struct AppRule: Codable, Identifiable, Hashable {
+    var id = UUID()
+    var bundleID: String
+    /// 1–10, or 0 for the workspace the app was last used on.
+    var workspace: Int
+    var launchAtStartup: Bool
+
+    init(bundleID: String = "", workspace: Int = 0, launchAtStartup: Bool = false) {
+        self.bundleID = bundleID
+        self.workspace = workspace
+        self.launchAtStartup = launchAtStartup
+    }
+
+    enum CodingKeys: String, CodingKey { case bundleID, workspace, launchAtStartup }
+
+    init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        bundleID = try c.decodeIfPresent(String.self, forKey: .bundleID) ?? ""
+        workspace = try c.decodeIfPresent(Int.self, forKey: .workspace) ?? 0
+        launchAtStartup = try c.decodeIfPresent(Bool.self, forKey: .launchAtStartup) ?? false
+    }
+}
+
 // MARK: - Config
 
 struct Config: Codable, Equatable {
@@ -194,6 +220,7 @@ struct Config: Codable, Equatable {
         "com.apple.Passwords",
     ]
     var ignoreApps: [String] = []
+    var appRules: [AppRule] = []
     var bindings: [Keybind] = Config.defaultBindings()
 
     func flags(for mods: [String]) -> CGEventFlags {
@@ -291,6 +318,7 @@ extension Config {
         resizeStep = try c.decodeIfPresent(Double.self, forKey: .resizeStep) ?? def.resizeStep
         floatApps = try c.decodeIfPresent([String].self, forKey: .floatApps) ?? def.floatApps
         ignoreApps = try c.decodeIfPresent([String].self, forKey: .ignoreApps) ?? def.ignoreApps
+        appRules = try c.decodeIfPresent([AppRule].self, forKey: .appRules) ?? def.appRules
         bindings = (try c.decodeIfPresent([Keybind].self, forKey: .bindings) ?? def.bindings).map { $0.migrated() }
     }
 }
