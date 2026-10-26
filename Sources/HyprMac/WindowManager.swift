@@ -54,6 +54,7 @@ final class WindowManager {
     private var suppressFocusUntil = Date.distantPast
     private var snapWork: [CGWindowID: DispatchWorkItem] = [:]
     private var hoverWork: DispatchWorkItem?
+    private var lastHoverCheck = Date.distantPast
     private var lastScrollSwitch = Date.distantPast
     private var tokens: [NSObjectProtocol] = []
     /// True while the screens are asleep or locked. macOS reports windows and
@@ -663,11 +664,12 @@ final class WindowManager {
     private func focus(_ w: ManagedWindow) {
         workspaces[w.workspace]?.focused = w.id
         if let m = monitorShowing(w.workspace) { focusedMonitor = m }
+        // Move the highlight first: the calls below wait on the app, which can be slow.
+        updateBorder(w)
+        AX.setBool(AXUIElementCreateApplication(w.pid), kAXFrontmostAttribute, true)
         AX.raise(w.el)
         AX.setBool(w.el, kAXMainAttribute, true)
-        AX.setBool(AXUIElementCreateApplication(w.pid), kAXFrontmostAttribute, true)
         NSRunningApplication(processIdentifier: w.pid)?.activate()
-        updateBorder(w)
         onStatus?()
     }
 
@@ -1085,22 +1087,30 @@ final class WindowManager {
         apply(w.workspace)
     }
 
-    /// Hover-to-focus. The pointer has to rest briefly, so windows crossed on
-    /// the way somewhere else don't grab focus.
+    /// Hover-to-focus, on the first movement into a window. Most mouse moves stay
+    /// inside the focused window and return straight away; the full check (which
+    /// asks macOS what's on top) runs at most every 30 ms, plus once after the
+    /// pointer stops so the final position always counts.
     func focusFollowsMouse(at p: CGPoint) {
         guard cfg.focusFollowsMouse, drag == nil, !paused, NSEvent.pressedMouseButtons == 0 else { return }
+        if let f = focusedWindow(), !f.hidden, rect(f)?.contains(p) == true,
+           NSWorkspace.shared.frontmostApplication?.processIdentifier == f.pid { return }
         hoverWork?.cancel()
-        let item = DispatchWorkItem { MainActor.assumeIsolated { self.hoverFocus() } }
-        hoverWork = item
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08, execute: item)
+        if Date().timeIntervalSince(lastHoverCheck) >= 0.03 {
+            hoverFocus(at: p)
+        } else {
+            let item = DispatchWorkItem { MainActor.assumeIsolated { self.hoverFocus(at: mouseLocationAX()) } }
+            hoverWork = item
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.03, execute: item)
+        }
     }
 
-    private func hoverFocus() {
+    private func hoverFocus(at p: CGPoint) {
+        lastHoverCheck = Date()
         guard cfg.focusFollowsMouse, drag == nil, !paused, NSEvent.pressedMouseButtons == 0 else { return }
         // Leave focus alone while one of HyprMac's own windows (settings, launcher) is in use.
         if NSApp.isActive, NSApp.keyWindow != nil { return }
         if popupHasFocus { return }
-        let p = mouseLocationAX()
         guard let top = topWindowID(at: p) else {
             // Over the empty desktop: just remember which display the pointer is on.
             if let m = monitors.first(where: { $0.frame.contains(p) }), m.id != focusedMonitor {
