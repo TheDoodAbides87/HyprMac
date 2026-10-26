@@ -63,7 +63,7 @@ final class Updater: ObservableObject {
             guard let newest, Self.compare(newest.version, Self.currentVersion) == .orderedDescending else {
                 available = nil
                 status = "HyprMac \(Self.currentVersion) is up to date."
-                if userInitiated { alert("You're up to date", "HyprMac \(Self.currentVersion) is the newest \(cfg.updateChannel.title.lowercased()) version.") }
+                if userInitiated { await alert("You're up to date", "HyprMac \(Self.currentVersion) is the newest \(cfg.updateChannel.title.lowercased()) version.") }
                 return
             }
             available = newest
@@ -71,11 +71,11 @@ final class Updater: ObservableObject {
             if cfg.autoInstallUpdates && !userInitiated {
                 await install(newest)
             } else {
-                offer(newest)
+                await offer(newest)
             }
         } catch {
             status = "Couldn't check for updates: \(error.localizedDescription)"
-            if userInitiated { alert("Couldn't check for updates", error.localizedDescription) }
+            if userInitiated { await alert("Couldn't check for updates", error.localizedDescription) }
         }
     }
 
@@ -156,7 +156,7 @@ final class Updater: ObservableObject {
             NSApp.terminate(nil)
         } catch {
             status = "Update failed: \(error.localizedDescription)"
-            let open = alert("Couldn't install HyprMac \(release.version)", error.localizedDescription, buttons: ["Open Release Page", "OK"])
+            let open = await alert("Couldn't install HyprMac \(release.version)", error.localizedDescription, buttons: ["Open Release Page", "OK"])
             if open == .alertFirstButtonReturn { NSWorkspace.shared.open(release.page) }
         }
     }
@@ -223,8 +223,8 @@ final class Updater: ObservableObject {
 
     // MARK: - Messages
 
-    private func offer(_ r: Release) {
-        let answer = alert("HyprMac \(r.version) is available",
+    private func offer(_ r: Release) async {
+        let answer = await alert("HyprMac \(r.version) is available",
                            "You have \(Self.currentVersion). HyprMac will restart to install it; your windows stay on their workspaces.",
                            buttons: ["Install and Restart", "Later", "Release Notes"])
         switch answer {
@@ -239,8 +239,9 @@ final class Updater: ObservableObject {
         UserDefaults.standard.removeObject(forKey: "updatedTo")
         guard v == Self.currentVersion else { return }
         status = "Updated to HyprMac \(v)."
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-            let answer = self.alert("HyprMac was updated to \(v)", "", buttons: ["OK", "What's New"])
+        Task {
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            let answer = await self.alert("HyprMac was updated to \(v)", "", buttons: ["OK", "What's New"])
             if answer == .alertSecondButtonReturn,
                let url = URL(string: "https://github.com/\(Self.repo)/releases/tag/v\(v)") {
                 NSWorkspace.shared.open(url)
@@ -249,15 +250,12 @@ final class Updater: ObservableObject {
     }
 
     @discardableResult
-    private func alert(_ title: String, _ text: String, buttons: [String] = ["OK"]) -> NSApplication.ModalResponse {
+    private func alert(_ title: String, _ text: String, buttons: [String] = ["OK"]) async -> NSApplication.ModalResponse {
         let a = NSAlert()
         a.messageText = title
         a.informativeText = text
         buttons.forEach { a.addButton(withTitle: $0) }
-        NSApp.activate()
-        AX.setBool(AXUIElementCreateApplication(getpid()), kAXFrontmostAttribute, true)
-        a.window.level = .floating
-        return a.runModal()
+        return await WindowManager.shared.presentAlert(a)
     }
 }
 

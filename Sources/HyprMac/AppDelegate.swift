@@ -63,10 +63,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private func installSignalHandlers() {
         for sig in [SIGTERM, SIGINT, SIGHUP] {
             signal(sig, SIG_IGN)
-            let src = DispatchSource.makeSignalSource(signal: sig, queue: .main)
+            // Handled off the main queue and run on the main run loop in every mode,
+            // so quitting works even while an alert is open.
+            let src = DispatchSource.makeSignalSource(signal: sig, queue: .global())
             src.setEventHandler {
-                MainActor.assumeIsolated { WindowManager.shared.prepareForQuit() }
-                exit(0)
+                let modes = [CFRunLoopMode.defaultMode.rawValue, "NSModalPanelRunLoopMode" as CFString,
+                             "NSEventTrackingRunLoopMode" as CFString] as CFArray
+                CFRunLoopPerformBlock(CFRunLoopGetMain(), modes) {
+                    MainActor.assumeIsolated { WindowManager.shared.prepareForQuit() }
+                    exit(0)
+                }
+                CFRunLoopWakeUp(CFRunLoopGetMain())
             }
             src.resume()
             signalSources.append(src)
@@ -143,6 +150,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             w.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
             w.center()
             w.delegate = self
+            // Sheets on Settings (e.g. "Restore the default keybindings?") get the pointer.
+            NotificationCenter.default.addObserver(forName: NSWindow.willBeginSheetNotification, object: w, queue: .main) { _ in
+                // The sheet slides in; aim for where it settles.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    guard let sheet = w.attachedSheet else { return }
+                    WindowManager.shared.movePointer(onto: sheet, dialog: true)
+                }
+            }
             settingsWindow = w
         }
         guard let w = settingsWindow else { return }

@@ -76,11 +76,9 @@ private struct GeneralTab: View {
                 }
                 .pickerStyle(.segmented)
                 Toggle("Priority windows keep focus until closed", isOn: $store.config.floatingHoldsFocus)
-                    .help("Dialogs, HyprMac's Settings and floating windows from Priority apps (Window Rules) blur the windows behind them, which can't take focus until you close them. Other floating windows just stay on top.")
+                    .help("HyprMac's Settings and floating windows from Priority apps (Window Rules) blur the windows behind them, which can't take focus until you close them. Dialog boxes always do this and always get the pointer. Other floating windows just stay on top.")
                 Toggle("Move the pointer to the focused window", isOn: $store.config.pointerFollowsFocus)
                     .help("When you move focus with the keyboard or open a new window, the pointer jumps to the middle of that window.")
-                Toggle("Move the pointer to new dialogs", isOn: $store.config.pointerToDialogs)
-                    .help("When an app shows a dialog or alert, bring it forward and move the pointer onto it, so nothing covers it.")
                 Toggle("Open screenshots on an empty workspace", isOn: $store.config.screenshotWorkspace)
                     .help("When you click a screenshot thumbnail to edit it, switch to an empty workspace, and switch back when you're done.")
                 LabeledSlider(title: "Resize step (px)", value: $store.config.resizeStep, range: 20...300, step: 10)
@@ -449,7 +447,7 @@ private struct RulesTab: View {
                        subtitle: "Windows from these apps open floating instead of tiled. The Toggle floating shortcut still works on them.",
                        items: $store.config.floatApps)
             BundleList(title: "Priority",
-                       subtitle: "Floating windows from these apps act like dialogs: the windows behind are blurred and can't take focus until you close them. Dialogs and HyprMac's Settings always do this; other floating windows just stay on top.",
+                       subtitle: "Floating windows from these apps keep focus until closed, with the windows behind blurred. Dialog boxes always do this and always get the pointer; HyprMac's Settings does too. Other floating windows just stay on top.",
                        items: $store.config.priorityApps)
             BundleList(title: "Never manage",
                        subtitle: "HyprMac ignores these apps completely: no tiling, no workspaces.",
@@ -656,7 +654,7 @@ private struct UpdatesSection: View {
                 alert.informativeText = "Beta builds get new features first, but they're less tested and things might break. You can switch back to Stable at any time; you'll keep the beta until the next stable release is newer."
                 alert.addButton(withTitle: "Use Beta Builds")
                 alert.addButton(withTitle: "Stay on Stable")
-                if alert.runModal() == .alertFirstButtonReturn { store.config.updateChannel = .beta }
+                if WindowManager.shared.runAlert(alert) == .alertFirstButtonReturn { store.config.updateChannel = .beta }
             }
         )
     }

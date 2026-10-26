@@ -5,7 +5,7 @@
 set -euo pipefail
 cd "${0:A:h}"
 
-VERSION=${HYPRMAC_VERSION:-1.1.0}
+VERSION=${HYPRMAC_VERSION:-1.2.0}
 INSTALL=0
 DMG=0
 for arg in "$@"; do

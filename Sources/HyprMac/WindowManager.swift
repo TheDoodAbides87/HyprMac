@@ -78,6 +78,8 @@ final class WindowManager {
     }
     private var focal: Focal?
     private weak var ownFocalWindow: NSWindow?
+    /// Whether HyprMac's own focal window is an alert (Dialogue Box) rather than Settings.
+    private var ownIsDialog = false
     private let blur = BlurOverlay()
 
     /// When each app was launched, to tell its first windows apart from ones
@@ -481,7 +483,8 @@ final class WindowManager {
         var ok = false
         for n in [kAXWindowCreatedNotification, kAXFocusedWindowChangedNotification,
                   kAXWindowMiniaturizedNotification, kAXWindowDeminiaturizedNotification,
-                  kAXApplicationHiddenNotification, kAXApplicationShownNotification] {
+                  kAXApplicationHiddenNotification, kAXApplicationShownNotification,
+                  kAXSheetCreatedNotification] {
             if AXObserverAddNotification(obs, appEl, n as CFString, nil) == .success { ok = true }
         }
         guard ok else { return }  // app not ready yet; retried on next refresh
@@ -496,6 +499,8 @@ final class WindowManager {
             geometryChanged(el)
         case kAXFocusedWindowChangedNotification:
             scheduleRefresh(focus: true)
+        case kAXSheetCreatedNotification:
+            sheetAppeared(el)
         case kAXWindowCreatedNotification:
             scheduleRefresh(delay: 0.05)
             scheduleRefresh(delay: 0.5, focus: true)
@@ -574,7 +579,8 @@ final class WindowManager {
             pointerTarget = nil
             if let w = windows[id], !w.hidden {
                 if w.floating { focus(w) }
-                movePointer(to: w)
+                // Dialogue Boxes always get the pointer.
+                if let r = rect(w) { movePointer(into: r, enabled: w.dialogLike ? true : nil) }
             }
         }
         if focusPending {
@@ -864,21 +870,36 @@ final class WindowManager {
     // MARK: - Focus lock
 
     /// True while a floating window or dialog is open and holding focus.
-    var focalIsHolding: Bool { started && !paused && cfg.floatingHoldsFocus && focalIsPriority && focalFrame != nil }
+    var focalIsHolding: Bool {
+        guard started, !paused, focalFrame != nil else { return false }
+        switch focalLevel {
+        case .dialogBox?: return true
+        case .priority?: return cfg.floatingHoldsFocus
+        default: return false
+        }
+    }
 
-    /// Two levels of floating window. Priority (dialogs and alerts, HyprMac's
-    /// Settings, and floating windows from apps in the Priority list) keeps focus
-    /// until closed and blurs what's behind. User App (every other floating
-    /// window or panel, like iPhone Mirroring) only stays on top with the glow.
-    private var focalIsPriority: Bool {
+    /// Three levels of floating window:
+    /// - Dialogue Box: dialogs, alerts and sheets (including HyprMac's own).
+    ///   Always gets the pointer and always holds focus, with the blur behind.
+    /// - Priority: HyprMac's Settings and floating windows from apps on the
+    ///   Priority list. Holds focus with the blur while that setting is on.
+    /// - User App: every other floating window or panel (e.g. iPhone
+    ///   Mirroring). Stays on top with the glow, nothing more.
+    private enum Level { case dialogBox, priority, userApp }
+
+    private var focalLevel: Level? {
         switch focal {
-        case .own?: return true
+        case .own?:
+            return ownIsDialog ? .dialogBox : .priority
         case .popup(let id)?:
-            guard let p = popups[id] else { return false }
-            return p.isDialog || cfg.priorityApps.contains(p.bundle)
+            guard let p = popups[id] else { return nil }
+            return p.isDialog ? .dialogBox : cfg.priorityApps.contains(p.bundle) ? .priority : .userApp
         case .managed(let id)?:
-            return windows[id].map { $0.dialogLike || cfg.priorityApps.contains($0.bundleID) } ?? false
-        case nil: return false
+            guard let w = windows[id] else { return nil }
+            return w.dialogLike ? .dialogBox : cfg.priorityApps.contains(w.bundleID) ? .priority : .userApp
+        case nil:
+            return nil
         }
     }
 
@@ -900,8 +921,9 @@ final class WindowManager {
         }
     }
 
-    func setOwnFocal(_ w: NSWindow) {
+    func setOwnFocal(_ w: NSWindow, dialog: Bool = false) {
         ownFocalWindow = w
+        ownIsDialog = dialog
         setFocal(.own)
     }
 
@@ -931,7 +953,7 @@ final class WindowManager {
             clearFocal()
             return
         }
-        if cfg.floatingHoldsFocus && focalIsPriority {
+        if focalIsHolding {
             switch focal {
             case .managed(let id)?, .popup(let id)?: blur.show(below: Int(id))
             default: blur.show(below: nil)
@@ -1060,7 +1082,7 @@ final class WindowManager {
             AX.setPosition(el, f.origin)
         }
         AX.raise(el)
-        guard isDialog, cfg.pointerToDialogs, NSEvent.pressedMouseButtons == 0 else { return }
+        guard isDialog, NSEvent.pressedMouseButtons == 0 else { return }
         AX.setBool(el, kAXMainAttribute, true)
         AX.setBool(AXUIElementCreateApplication(pid), kAXFrontmostAttribute, true)
         NSRunningApplication(processIdentifier: pid)?.activate()
@@ -1339,15 +1361,82 @@ final class WindowManager {
         }
     }
 
-    /// Moves the pointer onto one of HyprMac's own windows (e.g. Settings).
-    func movePointer(onto window: NSWindow) {
+    /// Moves the pointer onto one of HyprMac's own windows (e.g. Settings);
+    /// `dialog` uses the "Move the pointer to new dialogs" setting.
+    func movePointer(onto window: NSWindow, dialog: Bool = false) {
         guard let h = NSScreen.screens.first?.frame.height else { return }
         let f = window.frame
-        movePointer(into: CGRect(x: f.minX, y: h - f.maxY, width: f.width, height: f.height))
+        movePointer(into: CGRect(x: f.minX, y: h - f.maxY, width: f.width, height: f.height),
+                    enabled: dialog ? true : nil)
     }
 
-    private func movePointer(into r: CGRect) {
-        guard cfg.pointerFollowsFocus, NSEvent.pressedMouseButtons == 0, !r.contains(mouseLocationAX()) else { return }
+    /// Shows one of HyprMac's own alerts with the same treatment as other apps'
+    /// dialogs: in front, Priority focus (blur behind), and the pointer on it.
+    /// For async code (like the updater). The alert is opened from the run loop,
+    /// not from inside the queued task: an alert opened inside a task keeps
+    /// HyprMac's main queue busy until it closes, which stalled the pointer move,
+    /// shortcuts and hover focus, and kept HyprMac from quitting.
+    func presentAlert(_ alert: NSAlert) async -> NSApplication.ModalResponse {
+        await withCheckedContinuation { cont in
+            RunLoop.main.perform(inModes: [.default, .modalPanel, .eventTracking]) {
+                MainActor.assumeIsolated { cont.resume(returning: self.runAlert(alert)) }
+            }
+        }
+    }
+
+    /// Opens one of HyprMac's own alerts right away, as a Dialogue Box: in front,
+    /// focus held with the blur behind, and the pointer on it. For code that
+    /// already runs from the run loop, such as a button or menu action.
+    func runAlert(_ alert: NSAlert) -> NSApplication.ModalResponse {
+        alert.window.level = .floating
+        let previous = ownFocalWindow
+        let previousWasDialog = ownIsDialog
+        // runModal only returns when the alert closes, and the alert takes 50-100+ ms
+        // to appear, so a run-loop timer (which keeps firing during the alert)
+        // finishes setting it up once it's on screen.
+        let deadline = Date().addingTimeInterval(2)
+        let timer = Timer(timeInterval: 0.03, repeats: true) { t in
+            MainActor.assumeIsolated {
+                guard alert.window.isVisible else {
+                    if Date() > deadline { t.invalidate() }
+                    return
+                }
+                t.invalidate()
+                self.movePointer(onto: alert.window, dialog: true)
+                self.setOwnFocal(alert.window, dialog: true)
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        RunLoop.main.add(timer, forMode: .modalPanel)
+        NSApp.activate()
+        AX.setBool(AXUIElementCreateApplication(getpid()), kAXFrontmostAttribute, true)
+        let answer = alert.runModal()
+        timer.invalidate()
+        if ownFocalWindow === alert.window {
+            ownFocalWindow = nil
+            clearFocal()
+        }
+        // Back to Settings if the alert came from there.
+        if let previous, previous.isVisible { setOwnFocal(previous, dialog: previousWasDialog) }
+        return answer
+    }
+
+    /// A sheet (Save, Print, "save changes?") slid out of an app's window. Bring
+    /// that window forward and move the pointer onto the sheet.
+    private func sheetAppeared(_ sheet: AXUIElement) {
+        guard started, !paused else { return }
+        if let parent = AX.element(sheet, kAXParentAttribute) ?? AX.element(sheet, kAXWindowAttribute),
+           let id = AX.windowID(parent), let w = windows[id], !w.hidden, monitorShowing(w.workspace) != nil {
+            focus(w)
+        }
+        // The sheet animates in; aim for where it settles.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            if let f = AX.frame(sheet) { self.movePointer(into: f, enabled: true) }
+        }
+    }
+
+    private func movePointer(into r: CGRect, enabled: Bool? = nil) {
+        guard enabled ?? cfg.pointerFollowsFocus, NSEvent.pressedMouseButtons == 0, !r.contains(mouseLocationAX()) else { return }
         CGWarpMouseCursorPosition(CGPoint(x: r.midX, y: r.midY))
         CGAssociateMouseAndMouseCursorPosition(1)
     }
