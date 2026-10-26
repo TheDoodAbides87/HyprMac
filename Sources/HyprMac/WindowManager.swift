@@ -1254,6 +1254,7 @@ final class WindowManager {
         case .workspaceformer: if let p = previousWorkspace { switchTo(p) }
         case .close:
             if let w = focusedWindow(), let btn = AX.element(w.el, kAXCloseButtonAttribute) { AX.press(btn) }
+        case .quitapp: quitFocusedApp()
         case .togglefloating: toggleFloating()
         case .fullscreen: toggleFullscreen(.full)
         case .maximize: toggleFullscreen(.maximize)
@@ -1310,6 +1311,15 @@ final class WindowManager {
                 InputTap.postKey(0x2D, flags: .maskCommand)
             }
         }
+    }
+
+    /// Quits the app in front, like ⌘Q: it can still ask to save unsaved work.
+    /// HyprMac itself is never quit this way (use its menu).
+    private func quitFocusedApp() {
+        let front = NSWorkspace.shared.frontmostApplication
+        let pid = front?.processIdentifier != getpid() ? front?.processIdentifier : focusedWindow()?.pid
+        guard let pid, pid != getpid(), let app = NSRunningApplication(processIdentifier: pid) else { return }
+        app.terminate()
     }
 
     private func run(_ cmd: String) {

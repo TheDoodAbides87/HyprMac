@@ -38,7 +38,7 @@ enum Action: String, Codable, CaseIterable, Identifiable {
     case focus, swap
     case workspace, movetoworkspace, movetoworkspacesilent
     case workspacenext, workspaceprev, workspaceformer
-    case close, togglefloating, fullscreen, maximize, togglesplit, pseudo
+    case close, quitapp, togglefloating, fullscreen, maximize, togglesplit, pseudo
     case resizewidth, resizeheight
     case openapp, exec, launcher, spotlight, showkeys, settings, reload, pause
 
@@ -55,6 +55,7 @@ enum Action: String, Codable, CaseIterable, Identifiable {
         case .workspaceprev: "Previous workspace"
         case .workspaceformer: "Former workspace"
         case .close: "Close window"
+        case .quitapp: "Quit app"
         case .togglefloating: "Toggle floating"
         case .fullscreen: "Fullscreen"
         case .maximize: "Maximize (keep gaps)"
@@ -230,6 +231,16 @@ struct Config: Codable, Equatable {
     var priorityApps: [String] = []
     var appRules: [AppRule] = []
     var bindings: [Keybind] = Config.defaultBindings()
+    /// Which default shortcuts this config has been offered, so ones added in
+    /// later versions show up once for existing users (and stay deleted if removed).
+    var bindingsVersion = Config.currentBindingsVersion
+
+    static let currentBindingsVersion = 2
+
+    /// Default shortcuts added after the first release, by the version that added them.
+    static let addedBindings: [(version: Int, bind: Keybind)] = [
+        (2, .init(["super", "shift"], "w", .quitapp)),
+    ]
 
     func flags(for mods: [String]) -> CGEventFlags {
         var f: CGEventFlags = []
@@ -274,6 +285,7 @@ struct Config: Codable, Equatable {
             .init(["super"], "k", .showkeys),
 
             .init(["super"], "w", .close),
+            .init(["super", "shift"], "w", .quitapp),
             .init(["super"], "t", .togglefloating),
             .init(["super"], "f", .fullscreen),
             .init(["super", "alt"], "f", .maximize),
@@ -335,6 +347,13 @@ extension Config {
         priorityApps = try c.decodeIfPresent([String].self, forKey: .priorityApps) ?? def.priorityApps
         appRules = try c.decodeIfPresent([AppRule].self, forKey: .appRules) ?? def.appRules
         bindings = (try c.decodeIfPresent([Keybind].self, forKey: .bindings) ?? def.bindings).map { $0.migrated() }
+        // Older configs: add shortcuts introduced since, unless that key combination is taken.
+        let version = try c.decodeIfPresent(Int.self, forKey: .bindingsVersion) ?? 1
+        for added in Config.addedBindings where added.version > version {
+            let taken = bindings.contains { physicalComboKey($0) == physicalComboKey(added.bind) }
+            if !taken && !bindings.contains(where: { $0.action == added.bind.action }) { bindings.append(added.bind) }
+        }
+        bindingsVersion = Config.currentBindingsVersion
     }
 }
 

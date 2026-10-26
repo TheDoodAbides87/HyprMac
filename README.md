@@ -60,6 +60,7 @@ Window shortcuts use **⌥ Option** as the main modifier. A few also add **⌘ C
 | ⌥ Option + K | Keybinding cheat sheet |
 | ⌥ Option + ⇧ Shift + B / F / N / M / T | Browser / Finder / editor / music / Activity Monitor |
 | ⌥ Option + W | Close window |
+| ⌥ Option + ⇧ Shift + W | Quit the app in front (like ⌘Q) |
 | ⌥ Option + T | Toggle floating |
 | ⌥ Option + F | Fullscreen |
 | ⌥ Option + ⌘ Command + F | Maximize, keeping gaps |

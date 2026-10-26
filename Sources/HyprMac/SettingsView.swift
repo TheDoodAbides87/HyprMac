@@ -670,7 +670,7 @@ struct CheatSheetView: View {
         func pick(_ actions: Set<Action>) -> [Keybind] { b.filter { actions.contains($0.action) } }
         return [
             ("Apps", pick([.openapp, .exec, .launcher, .spotlight, .showkeys, .settings, .reload, .pause])),
-            ("Windows", pick([.close, .togglefloating, .fullscreen, .maximize, .togglesplit, .pseudo, .focus, .swap, .resizewidth, .resizeheight])),
+            ("Windows", pick([.close, .quitapp, .togglefloating, .fullscreen, .maximize, .togglesplit, .pseudo, .focus, .swap, .resizewidth, .resizeheight])),
             ("Workspaces", pick([.workspace, .movetoworkspace, .movetoworkspacesilent, .workspacenext, .workspaceprev, .workspaceformer])),
         ].filter { !$0.1.isEmpty }
     }
