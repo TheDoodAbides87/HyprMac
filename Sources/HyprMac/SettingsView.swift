@@ -75,6 +75,8 @@ private struct GeneralTab: View {
                     Text("On hover").tag(true)
                 }
                 .pickerStyle(.segmented)
+                Toggle("Move the pointer to the focused window", isOn: $store.config.pointerFollowsFocus)
+                    .help("When you move focus with the keyboard or open a new window, the pointer jumps to the middle of that window.")
                 Toggle("Move the pointer to new dialogs", isOn: $store.config.pointerToDialogs)
                     .help("When an app shows a dialog or alert, bring it forward and move the pointer onto it, so nothing covers it.")
                 Toggle("Open screenshots on an empty workspace", isOn: $store.config.screenshotWorkspace)

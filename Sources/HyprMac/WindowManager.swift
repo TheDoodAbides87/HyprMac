@@ -63,6 +63,12 @@ final class WindowManager {
         let el: AXUIElement
     }
     private var popups: [CGWindowID: Popup] = [:]
+
+    /// When each app was launched, to tell its first windows apart from ones
+    /// an app opens on its own in the background.
+    private var launchedAt: [pid_t: Date] = [:]
+    /// A newly opened window to move the pointer to once it's laid out.
+    private var pointerTarget: CGWindowID?
     private var lastHoverCheck = Date.distantPast
     private var lastScrollSwitch = Date.distantPast
     private var tokens: [NSObjectProtocol] = []
@@ -138,7 +144,10 @@ final class WindowManager {
         tokens.append(wnc.addObserver(forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: .main) { n in
             let app = n.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
             MainActor.assumeIsolated {
-                if let app { self.observe(app) }
+                if let app {
+                    self.observe(app)
+                    self.launchedAt[app.processIdentifier] = Date()
+                }
                 self.scheduleRefresh(delay: 0.4)
             }
         })
@@ -147,6 +156,7 @@ final class WindowManager {
             MainActor.assumeIsolated {
                 if let pid {
                     self.observers[pid] = nil
+                    self.launchedAt[pid] = nil
                     self.remembered = self.remembered.filter { $0.value.pid != pid }
                 }
                 self.scheduleRefresh()
@@ -497,6 +507,10 @@ final class WindowManager {
             pendingSwitch = nil
             switchTo(n)
         }
+        if let id = pointerTarget {
+            pointerTarget = nil
+            if let w = windows[id], !w.hidden { movePointer(to: w) }
+        }
         if focusPending {
             focusPending = false
             syncFocus()
@@ -533,6 +547,13 @@ final class WindowManager {
             // there too unless HyprMac launched it quietly at startup.
             n = target
             if !startupLaunches.contains(bundle) { pendingSwitch = target }
+        }
+        // A window you just opened (its app is in front or was just launched)
+        // gets the pointer, unless HyprMac opened the app quietly at startup.
+        if !initial, memory == nil, !startupLaunches.contains(bundle),
+           NSWorkspace.shared.frontmostApplication?.processIdentifier == pid
+            || (launchedAt[pid].map { Date().timeIntervalSince($0) < 10 } ?? false) {
+            pointerTarget = id
         }
         startupLaunches.remove(bundle)
         noteWorkspace(bundle, n)
@@ -1035,6 +1056,7 @@ final class WindowManager {
             if let m = monitor(in: d, from: focusedMonitor) {
                 focusedMonitor = m.id
                 focusWorkspace(activeWorkspace(on: m.id))
+                movePointerToFocus(on: m)
             }
             return
         }
@@ -1044,10 +1066,32 @@ final class WindowManager {
             .compactMap { w in rect(w).map { (w, $0) } }
         if let n = neighbor(of: r, d, among: cands) {
             focus(n)
+            movePointer(to: n)
         } else if let m = monitor(in: d, from: focusedMonitor) {
             focusedMonitor = m.id
             focusWorkspace(activeWorkspace(on: m.id))
+            movePointerToFocus(on: m)
         }
+    }
+
+    /// Hyprland-style: the pointer follows keyboard focus, so it's where you're looking.
+    private func movePointer(to w: ManagedWindow) {
+        guard let r = rect(w) else { return }
+        movePointer(into: r)
+    }
+
+    private func movePointerToFocus(on m: Monitor) {
+        if let w = focusedWindow(), !w.hidden, monitorShowing(w.workspace) == m.id {
+            movePointer(to: w)
+        } else {
+            movePointer(into: m.visible)  // empty workspace: the middle of that screen
+        }
+    }
+
+    private func movePointer(into r: CGRect) {
+        guard cfg.pointerFollowsFocus, NSEvent.pressedMouseButtons == 0, !r.contains(mouseLocationAX()) else { return }
+        CGWarpMouseCursorPosition(CGPoint(x: r.midX, y: r.midY))
+        CGAssociateMouseAndMouseCursorPosition(1)
     }
 
     private func swapDir(_ d: Dir) {
