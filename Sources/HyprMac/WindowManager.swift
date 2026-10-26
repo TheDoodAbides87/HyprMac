@@ -55,6 +55,14 @@ final class WindowManager {
     private var snapWork: [CGWindowID: DispatchWorkItem] = [:]
     private var hoverWork: DispatchWorkItem?
     private var floatRaiseWork: [DispatchWorkItem] = []
+
+    /// Dialogs, alerts and panels from apps. HyprMac doesn't tile these, but
+    /// keeps them above the tiles and brings new dialogs to your attention.
+    private struct Popup {
+        let pid: pid_t
+        let el: AXUIElement
+    }
+    private var popups: [CGWindowID: Popup] = [:]
     private var lastHoverCheck = Date.distantPast
     private var lastScrollSwitch = Date.distantPast
     private var tokens: [NSObjectProtocol] = []
@@ -446,6 +454,7 @@ final class WindowManager {
             return
         }
         var seen = Set<CGWindowID>()
+        var seenPopups = Set<CGWindowID>()
         let ignore = Set(cfg.ignoreApps)
         for app in NSWorkspace.shared.runningApplications
         where app.activationPolicy == .regular && app.processIdentifier != getpid() {
@@ -462,11 +471,21 @@ final class WindowManager {
                     if AX.bool(el, kAXMinimizedAttribute) != true { seen.insert(id) }
                     continue
                 }
-                guard isManageable(el) else { continue }
+                guard isManageable(el) else {
+                    if let kind = popupKind(el) {
+                        seenPopups.insert(id)
+                        if popups[id] == nil {
+                            popups[id] = Popup(pid: pid, el: el)
+                            if !initial { popupAppeared(el, pid: pid, isDialog: kind == .dialog) }
+                        }
+                    }
+                    continue
+                }
                 seen.insert(id)
                 add(el, id: id, pid: pid, bundle: bundle, initial: initial)
             }
         }
+        popups = popups.filter { seenPopups.contains($0.key) }
         for (id, w) in windows where !seen.contains(id) {
             switch disappearance(of: w) {
             case .transient: continue
@@ -759,10 +778,49 @@ final class WindowManager {
                 MainActor.assumeIsolated {
                     guard let tile = self.focusedWindow(), !tile.floating, !tile.hidden else { return }
                     for w in self.visibleWindows where w.floating && w.pid != tile.pid { AX.raise(w.el) }
+                    for p in self.popups.values where p.pid != tile.pid { AX.raise(p.el) }
                 }
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
             return item
+        }
+    }
+
+    private enum PopupKind { case dialog, panel }
+
+    /// Dialogs and alerts, and floating panels (palettes, Find bars). Tiny
+    /// windows such as tooltips are left out.
+    private func popupKind(_ el: AXUIElement) -> PopupKind? {
+        guard AX.string(el, kAXRoleAttribute) == kAXWindowRole,
+              AX.bool(el, kAXMinimizedAttribute) != true,
+              let f = AX.frame(el), f.width >= 120, f.height >= 60 else { return nil }
+        switch AX.string(el, kAXSubroleAttribute) {
+        case kAXDialogSubrole, kAXSystemDialogSubrole: return .dialog
+        case kAXFloatingWindowSubrole: return .panel
+        default: return nil
+        }
+    }
+
+    /// A new dialog or panel: make sure it's on a screen you can see and in
+    /// front. For dialogs, also focus them and move the pointer onto them, so
+    /// hover focus can't move away and no tile ends up covering them.
+    private func popupAppeared(_ el: AXUIElement, pid: pid_t, isDialog: Bool) {
+        guard var f = AX.frame(el) else { return }
+        // A dialog from an app whose windows are parked on another workspace
+        // can open off screen next to them; bring it to the middle of this screen.
+        let onScreen = monitors.contains { $0.visible.intersection(f).width >= min(f.width, 100) }
+        if !onScreen, let m = monitor(focusedMonitor) {
+            f = centered(f.size, in: m.visible)
+            AX.setPosition(el, f.origin)
+        }
+        AX.raise(el)
+        guard isDialog, cfg.pointerToDialogs, NSEvent.pressedMouseButtons == 0 else { return }
+        AX.setBool(el, kAXMainAttribute, true)
+        AX.setBool(AXUIElementCreateApplication(pid), kAXFrontmostAttribute, true)
+        NSRunningApplication(processIdentifier: pid)?.activate()
+        if !f.contains(mouseLocationAX()) {
+            CGWarpMouseCursorPosition(CGPoint(x: f.midX, y: f.midY))
+            CGAssociateMouseAndMouseCursorPosition(1)
         }
     }
 

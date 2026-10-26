@@ -9,7 +9,7 @@ A small native tiling window manager for macOS that brings Hyprland's tiling beh
 - **A built-in app launcher** (⌥ Option + Space): type, use the arrow keys, and press Return.
 - **Menu-bar workspace indicator**, similar to Waybar's.
 - **Click or hover to focus.** Choose in Settings › General whether a window takes focus when you click it (the macOS default) or as soon as the pointer moves onto it. With hover, a popup, dialog or floating window keeps focus until you click elsewhere, so the tiles around it can't cover it.
-- **Floating windows stay on top.** New floating windows open centered on the screen, and when you focus a tile, floating windows are brought back above it.
+- **Floating windows and dialogs stay on top.** New floating windows open centered on the screen. When you focus a tile, floating windows, dialogs and panels are brought back above it. A new dialog is brought forward and the pointer moves onto it (you can turn that off in Settings › General).
 - **App workspaces.** In Settings › App Workspaces, pick apps from a dropdown and choose the workspace each one opens on: a fixed one, or the one you last used it on. Tick **Open at startup** to have HyprMac open the app when it starts.
 - **Room for screenshots.** Click a screenshot thumbnail to edit it and HyprMac switches to an empty workspace, then back when you click Done. You can turn this off in Settings › General.
 - **A settings window** for every option. You can record shortcuts by pressing them, change the action for any key, set float/ignore rules for apps, and turn on launch at login.

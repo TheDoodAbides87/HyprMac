@@ -211,6 +211,7 @@ struct Config: Codable, Equatable {
     var mouseBindings = true
     var focusFollowsMouse = false
     var screenshotWorkspace = true
+    var pointerToDialogs = true
     var resizeStep: Double = 100
     var floatApps: [String] = [
         "com.apple.systempreferences",
@@ -315,6 +316,7 @@ extension Config {
         mouseBindings = try c.decodeIfPresent(Bool.self, forKey: .mouseBindings) ?? def.mouseBindings
         focusFollowsMouse = try c.decodeIfPresent(Bool.self, forKey: .focusFollowsMouse) ?? def.focusFollowsMouse
         screenshotWorkspace = try c.decodeIfPresent(Bool.self, forKey: .screenshotWorkspace) ?? def.screenshotWorkspace
+        pointerToDialogs = try c.decodeIfPresent(Bool.self, forKey: .pointerToDialogs) ?? def.pointerToDialogs
         resizeStep = try c.decodeIfPresent(Double.self, forKey: .resizeStep) ?? def.resizeStep
         floatApps = try c.decodeIfPresent([String].self, forKey: .floatApps) ?? def.floatApps
         ignoreApps = try c.decodeIfPresent([String].self, forKey: .ignoreApps) ?? def.ignoreApps

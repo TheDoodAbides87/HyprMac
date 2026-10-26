@@ -75,6 +75,8 @@ private struct GeneralTab: View {
                     Text("On hover").tag(true)
                 }
                 .pickerStyle(.segmented)
+                Toggle("Move the pointer to new dialogs", isOn: $store.config.pointerToDialogs)
+                    .help("When an app shows a dialog or alert, bring it forward and move the pointer onto it, so nothing covers it.")
                 Toggle("Open screenshots on an empty workspace", isOn: $store.config.screenshotWorkspace)
                     .help("When you click a screenshot thumbnail to edit it, switch to an empty workspace, and switch back when you're done.")
                 LabeledSlider(title: "Resize step (px)", value: $store.config.resizeStep, range: 20...300, step: 10)
