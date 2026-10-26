@@ -73,6 +73,11 @@ enum Action: String, Codable, CaseIterable, Identifiable {
         }
     }
 
+    /// Whether holding the shortcut keeps repeating the action.
+    var repeats: Bool {
+        self == .resizewidth || self == .resizeheight
+    }
+
     var argHint: String? {
         switch self {
         case .focus, .swap: "left | right | up | down"

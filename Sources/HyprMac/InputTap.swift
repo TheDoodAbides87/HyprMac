@@ -76,6 +76,10 @@ final class InputTap {
             guard let b = table[Combo(key: code, flags: flags.rawValue)] else { return true }
             if wm.paused && b.action != .pause { return true }
             swallowedKeys.insert(code)
+            // Holding a shortcut makes macOS repeat the key. Only resizing should
+            // repeat; anything else (opening an app, switching workspace…) runs once.
+            let repeated = e.getIntegerValueField(.keyboardEventAutorepeat) != 0
+            if repeated && !b.action.repeats { return false }
             DispatchQueue.main.async { wm.perform(b) }
             return false
 

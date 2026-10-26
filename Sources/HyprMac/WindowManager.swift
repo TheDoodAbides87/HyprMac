@@ -832,12 +832,16 @@ final class WindowManager {
 
     private func openApp(_ id: String, newWindow: Bool) {
         guard let url = AppCatalog.url(for: id) else { return }
-        let wasRunning = !NSRunningApplication.runningApplications(withBundleIdentifier: id).isEmpty
+        // An app that isn't running, or is running with no windows, opens a window
+        // by itself when launched or switched to; ⌘N on top of that makes two.
+        let hadWindow = NSRunningApplication.runningApplications(withBundleIdentifier: id).contains { app in
+            !AX.elements(AXUIElementCreateApplication(app.processIdentifier), kAXWindowsAttribute).isEmpty
+        }
         let conf = NSWorkspace.OpenConfiguration()
         conf.activates = true
         NSWorkspace.shared.openApplication(at: url, configuration: conf) { _, _ in }
-        // A running app only comes to the front; ask it for a fresh window with ⌘N.
-        guard newWindow, wasRunning else { return }
+        // An app that already has a window only comes to the front; ask it for a fresh one.
+        guard newWindow, hadWindow else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
             if NSWorkspace.shared.frontmostApplication?.bundleIdentifier == id {
                 InputTap.postKey(0x2D, flags: .maskCommand)
