@@ -254,7 +254,9 @@ final class Updater: ObservableObject {
         a.messageText = title
         a.informativeText = text
         buttons.forEach { a.addButton(withTitle: $0) }
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activate()
+        AX.setBool(AXUIElementCreateApplication(getpid()), kAXFrontmostAttribute, true)
+        a.window.level = .floating
         return a.runModal()
     }
 }

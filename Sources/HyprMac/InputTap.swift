@@ -30,6 +30,8 @@ final class InputTap {
     private var followMouse = false
     private var swallowedKeys = Set<UInt16>()
     private var dragging = false
+    /// A click that's being ignored because a floating window holds focus.
+    private var blockingClick = false
 
     func rebuild(_ cfg: Config) {
         var t: [Combo: Keybind] = [:]
@@ -88,6 +90,13 @@ final class InputTap {
             return swallowedKeys.remove(code) == nil
 
         case .leftMouseDown, .rightMouseDown:
+            if !suspended, flags != superFlag, wm.blocksClick(at: e.location) {
+                // A floating window or dialog holds focus: ignore clicks on the
+                // tiles behind it and hand focus back to it.
+                blockingClick = true
+                DispatchQueue.main.async { wm.returnToFocal() }
+                return false
+            }
             guard mouseEnabled, !suspended, !wm.paused, wm.started, flags == superFlag else { return true }
             let p = e.location
             let resize = type == .rightMouseDown
@@ -96,6 +105,7 @@ final class InputTap {
             return false
 
         case .leftMouseDragged, .rightMouseDragged:
+            if blockingClick { return false }
             guard dragging else { return true }
             let p = e.location
             DispatchQueue.main.async { wm.dragMoved(to: p) }
@@ -103,6 +113,11 @@ final class InputTap {
 
         case .leftMouseUp, .rightMouseUp:
             lastMouseUp = Date()
+            if blockingClick {
+                blockingClick = false
+                return false
+            }
+            DispatchQueue.main.async { wm.focalMayHaveMoved() }
             guard dragging else { return true }
             dragging = false
             let p = e.location

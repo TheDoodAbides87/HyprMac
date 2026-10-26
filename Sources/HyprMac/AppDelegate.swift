@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelegate {
     static weak var shared: AppDelegate?
 
     private var statusItem: NSStatusItem!
@@ -138,12 +138,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                              backing: .buffered, defer: false)
             w.title = "HyprMac Settings"
             w.isReleasedWhenClosed = false
+            // Settings floats above other windows so it can't get lost behind tiles.
+            w.level = .floating
+            w.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
             w.center()
+            w.delegate = self
             settingsWindow = w
         }
-        settingsWindow?.contentView = NSHostingView(rootView: SettingsView(store: ConfigStore.shared, tab: tab))
-        NSApp.activate(ignoringOtherApps: true)
-        settingsWindow?.makeKeyAndOrderFront(nil)
+        guard let w = settingsWindow else { return }
+        w.contentView = NSHostingView(rootView: SettingsView(store: ConfigStore.shared, tab: tab))
+        bringForward(w)
+        WindowManager.shared.movePointer(onto: w)
+        WindowManager.shared.setOwnFocal(w)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        if let w = notification.object as? NSWindow { WindowManager.shared.ownWindowClosed(w) }
+    }
+
+    /// Brings one of HyprMac's own windows to the front with keyboard focus.
+    /// Since macOS 14 a menu-bar app asking to activate is often refused when
+    /// another app is in front (as when Settings is opened with a shortcut),
+    /// so HyprMac also asks the way it brings other apps forward.
+    func bringForward(_ w: NSWindow) {
+        NSApp.activate()
+        AX.setBool(AXUIElementCreateApplication(getpid()), kAXFrontmostAttribute, true)
+        w.makeKeyAndOrderFront(nil)
+        w.orderFrontRegardless()
+        // If the first request lost a race with the app in front, try once more.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            guard w.isVisible, !w.isKeyWindow else { return }
+            NSApp.activate()
+            AX.setBool(AXUIElementCreateApplication(getpid()), kAXFrontmostAttribute, true)
+            w.makeKeyAndOrderFront(nil)
+        }
     }
 
     func showLauncher() {
@@ -172,8 +200,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             panel.setFrameOrigin(NSPoint(x: vf.midX - 310, y: vf.maxY - vf.height / 4 - 420))
         }
         launcherPanel = panel
-        NSApp.activate(ignoringOtherApps: true)
-        panel.makeKeyAndOrderFront(nil)
+        bringForward(panel)
     }
 
     func showCheatSheet() {
@@ -191,8 +218,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         panel.contentView = NSHostingView(rootView: CheatSheetView(config: ConfigStore.shared.config))
         panel.center()
         cheatPanel = panel
-        NSApp.activate(ignoringOtherApps: true)
-        panel.makeKeyAndOrderFront(nil)
+        bringForward(panel)
     }
 }
 

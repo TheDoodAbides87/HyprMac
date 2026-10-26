@@ -213,6 +213,7 @@ struct Config: Codable, Equatable {
     var screenshotWorkspace = true
     var pointerToDialogs = true
     var pointerFollowsFocus = true
+    var floatingHoldsFocus = true
     var updateChannel: UpdateChannel = .stable
     var autoCheckUpdates = true
     var autoInstallUpdates = true
@@ -225,6 +226,8 @@ struct Config: Codable, Equatable {
         "com.apple.Passwords",
     ]
     var ignoreApps: [String] = []
+    /// Apps whose floating windows are treated like dialogs (Priority): they keep focus and blur the windows behind.
+    var priorityApps: [String] = []
     var appRules: [AppRule] = []
     var bindings: [Keybind] = Config.defaultBindings()
 
@@ -322,12 +325,14 @@ extension Config {
         screenshotWorkspace = try c.decodeIfPresent(Bool.self, forKey: .screenshotWorkspace) ?? def.screenshotWorkspace
         pointerToDialogs = try c.decodeIfPresent(Bool.self, forKey: .pointerToDialogs) ?? def.pointerToDialogs
         pointerFollowsFocus = try c.decodeIfPresent(Bool.self, forKey: .pointerFollowsFocus) ?? def.pointerFollowsFocus
+        floatingHoldsFocus = try c.decodeIfPresent(Bool.self, forKey: .floatingHoldsFocus) ?? def.floatingHoldsFocus
         updateChannel = try c.decodeIfPresent(UpdateChannel.self, forKey: .updateChannel) ?? def.updateChannel
         autoCheckUpdates = try c.decodeIfPresent(Bool.self, forKey: .autoCheckUpdates) ?? def.autoCheckUpdates
         autoInstallUpdates = try c.decodeIfPresent(Bool.self, forKey: .autoInstallUpdates) ?? def.autoInstallUpdates
         resizeStep = try c.decodeIfPresent(Double.self, forKey: .resizeStep) ?? def.resizeStep
         floatApps = try c.decodeIfPresent([String].self, forKey: .floatApps) ?? def.floatApps
         ignoreApps = try c.decodeIfPresent([String].self, forKey: .ignoreApps) ?? def.ignoreApps
+        priorityApps = try c.decodeIfPresent([String].self, forKey: .priorityApps) ?? def.priorityApps
         appRules = try c.decodeIfPresent([AppRule].self, forKey: .appRules) ?? def.appRules
         bindings = (try c.decodeIfPresent([Keybind].self, forKey: .bindings) ?? def.bindings).map { $0.migrated() }
     }
