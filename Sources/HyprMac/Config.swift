@@ -213,6 +213,9 @@ struct Config: Codable, Equatable {
     var screenshotWorkspace = true
     var pointerToDialogs = true
     var pointerFollowsFocus = true
+    var updateChannel: UpdateChannel = .stable
+    var autoCheckUpdates = true
+    var autoInstallUpdates = true
     var resizeStep: Double = 100
     var floatApps: [String] = [
         "com.apple.systempreferences",
@@ -319,6 +322,9 @@ extension Config {
         screenshotWorkspace = try c.decodeIfPresent(Bool.self, forKey: .screenshotWorkspace) ?? def.screenshotWorkspace
         pointerToDialogs = try c.decodeIfPresent(Bool.self, forKey: .pointerToDialogs) ?? def.pointerToDialogs
         pointerFollowsFocus = try c.decodeIfPresent(Bool.self, forKey: .pointerFollowsFocus) ?? def.pointerFollowsFocus
+        updateChannel = try c.decodeIfPresent(UpdateChannel.self, forKey: .updateChannel) ?? def.updateChannel
+        autoCheckUpdates = try c.decodeIfPresent(Bool.self, forKey: .autoCheckUpdates) ?? def.autoCheckUpdates
+        autoInstallUpdates = try c.decodeIfPresent(Bool.self, forKey: .autoInstallUpdates) ?? def.autoInstallUpdates
         resizeStep = try c.decodeIfPresent(Double.self, forKey: .resizeStep) ?? def.resizeStep
         floatApps = try c.decodeIfPresent([String].self, forKey: .floatApps) ?? def.floatApps
         ignoreApps = try c.decodeIfPresent([String].self, forKey: .ignoreApps) ?? def.ignoreApps

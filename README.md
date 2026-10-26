@@ -13,6 +13,7 @@ A small native tiling window manager for macOS that brings Hyprland's tiling beh
 - **Floating windows and dialogs stay on top.** New floating windows open centered on the screen. When you focus a tile, floating windows, dialogs and panels are brought back above it. A new dialog is brought forward and the pointer moves onto it (you can turn that off in Settings › General).
 - **App workspaces.** In Settings › App Workspaces, pick apps from a dropdown and choose the workspace each one opens on: a fixed one, or the one you last used it on. Tick **Open at startup** to have HyprMac open the app when it starts.
 - **Room for screenshots.** Click a screenshot thumbnail to edit it and HyprMac switches to an empty workspace, then back when you click Done. You can turn this off in Settings › General.
+- **Updates itself** from GitHub releases (see [Updates](#updates)).
 - **A settings window** for every option. You can record shortcuts by pressing them, change the action for any key, set float/ignore rules for apps, and turn on launch at login.
 
 It doesn't need SIP turned off and has no dependencies. It's built from Swift source with the Command Line Tools.
@@ -25,6 +26,15 @@ It doesn't need SIP turned off and has no dependencies. It's built from Swift so
 4. When asked, allow HyprMac under **Privacy & Security › Accessibility**. Tiling starts as soon as you do.
 
 Requires macOS 14 or later.
+
+## Updates
+
+HyprMac checks this repository's releases a little after it starts and every 6 hours after that. When a newer version is out, it downloads it, checks it, restarts and puts every window back on its workspace. Change this in **Settings › System › Updates**:
+
+- **Update channel.** **Stable** (the default) only installs full releases. **Beta** also installs pre-releases. They get new features first but are less tested, so things might break; HyprMac asks you to confirm before switching. Going back to Stable keeps the beta you have until a newer stable release comes out.
+- **Check for updates automatically** and **Install updates automatically.** With automatic installing off, HyprMac asks before installing. You can also choose **Check for Updates…** from the menu bar.
+
+An update is only installed if it's signed with the same certificate as the copy you're running. This also means macOS keeps HyprMac's Accessibility permission after updating. Versions before 1.0 can't update themselves, so install 1.0 by hand once.
 
 ## Build from source
 
@@ -106,6 +116,7 @@ In the JSON, `super` means the main modifier and `alt` means the second modifier
 | `SettingsView.swift` | SwiftUI settings window and keybinding cheat sheet |
 | `Launcher.swift` | Built-in app launcher |
 | `Apps.swift` | Installed-app catalog and default apps |
+| `Updater.swift` | Self-updates from GitHub releases |
 | `AppDelegate.swift` | Menu-bar item, permission flow, window plumbing |
 
 ## License

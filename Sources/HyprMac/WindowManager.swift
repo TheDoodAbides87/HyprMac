@@ -206,6 +206,7 @@ final class WindowManager {
         loadState()
         started = true
         refresh(initial: true)
+        relaunchWindows.removeAll()
         syncFocus()
         launchStartupApps()
     }
@@ -214,18 +215,60 @@ final class WindowManager {
 
     private struct State: Codable {
         var lastWorkspace: [String: Int] = [:]
+        /// Written when HyprMac quits, so a restart (or an update) puts every
+        /// window back on its workspace. Window IDs last as long as the window.
+        var relaunch: Relaunch?
+    }
+
+    private struct Relaunch: Codable {
+        struct SavedWindow: Codable { let workspace: Int; let floating: Bool }
+        var savedAt: Date
+        var windows: [CGWindowID: SavedWindow]
+        var active: [CGDirectDisplayID: Int]
+        var focusedMonitor: CGDirectDisplayID
+    }
+
+    private var relaunchWindows: [CGWindowID: Relaunch.SavedWindow] = [:]
+
+    /// Called when HyprMac quits: remember the layout, then bring parked windows back.
+    func prepareForQuit() {
+        if started && !paused {
+            let saved = windows.mapValues { Relaunch.SavedWindow(workspace: $0.workspace, floating: $0.floating) }
+            writeState(relaunch: Relaunch(savedAt: Date(), windows: saved, active: active, focusedMonitor: focusedMonitor))
+        }
+        restoreAll()
     }
 
     private func loadState() {
         guard let data = try? Data(contentsOf: stateURL),
               let state = try? JSONDecoder().decode(State.self, from: data) else { return }
         lastWorkspace = state.lastWorkspace
+        // Coming back from a restart: restore which workspace each display
+        // showed and where each window was. Old saves (e.g. after a reboot,
+        // when windows are new) are ignored.
+        if let r = state.relaunch, Date().timeIntervalSince(r.savedAt) < 600 {
+            relaunchWindows = r.windows
+            let ids = Set(monitors.map(\.id))
+            let restored = r.active.filter { ids.contains($0.key) }
+            if !restored.isEmpty {
+                active = restored
+                for (m, n) in restored {
+                    workspaces[n]?.monitor = m
+                    lastShown[m] = n
+                }
+                reconcileMonitors()  // any display that wasn't in the save gets a workspace
+                if ids.contains(r.focusedMonitor) { focusedMonitor = r.focusedMonitor }
+            }
+        }
+        if state.relaunch != nil { saveState() }  // used once
     }
 
-    private func saveState() {
+    private func saveState() { writeState(relaunch: nil) }
+
+    private func writeState(relaunch: Relaunch?) {
         let enc = JSONEncoder()
         enc.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? enc.encode(State(lastWorkspace: lastWorkspace)) else { return }
+        guard let data = try? enc.encode(State(lastWorkspace: lastWorkspace, relaunch: relaunch)) else { return }
         try? FileManager.default.createDirectory(at: stateURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? data.write(to: stateURL, options: .atomic)
     }
@@ -538,6 +581,8 @@ final class WindowManager {
         if initial, let m = monitors.first(where: { $0.frame.contains(frame.center) }), let a = active[m.id] {
             n = a
         }
+        let saved = initial ? relaunchWindows.removeValue(forKey: id) : nil
+        if let saved, (1...10).contains(saved.workspace) { n = saved.workspace }
         let memory = remembered.removeValue(forKey: id)
         if let memory {
             n = memory.workspace
@@ -559,7 +604,7 @@ final class WindowManager {
         noteWorkspace(bundle, n)
         let ws = workspaces[n]!
         let w = ManagedWindow(id: id, pid: pid, el: el, bundleID: bundle, workspace: n)
-        w.floating = memory?.floating ?? shouldFloat(el, bundle: bundle)
+        w.floating = memory?.floating ?? saved?.floating ?? shouldFloat(el, bundle: bundle)
         if w.floating {
             w.floatFrame = memory?.floatFrame ?? frame
             // New floating windows open centered on their workspace's screen.

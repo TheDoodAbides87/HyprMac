@@ -554,6 +554,8 @@ private struct SystemTab: View {
                 }
             }
 
+            UpdatesSection(store: store)
+
             Section("Startup") {
                 Toggle("Launch HyprMac at login", isOn: Binding(
                     get: { s.loginItem },
@@ -598,6 +600,60 @@ private struct SystemTab: View {
         .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in
             s.trusted = AXIsProcessTrusted()
         }
+    }
+}
+
+// MARK: - Updates
+
+private struct UpdatesSection: View {
+    @ObservedObject var store: ConfigStore
+    @ObservedObject var updater = Updater.shared
+
+    var body: some View {
+        Section("Updates") {
+            LabeledContent("Installed version", value: Updater.currentVersion)
+            Picker("Update channel", selection: channel) {
+                ForEach(UpdateChannel.allCases) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            Toggle("Check for updates automatically", isOn: $store.config.autoCheckUpdates)
+            Toggle("Install updates automatically", isOn: $store.config.autoInstallUpdates)
+                .disabled(!store.config.autoCheckUpdates)
+                .help("HyprMac restarts to install an update; your windows stay on their workspaces.")
+            HStack {
+                Button("Check Now") { Task { await updater.check(userInitiated: true) } }
+                    .disabled(updater.busy)
+                if updater.busy { ProgressView().controlSize(.small) }
+                Text(updater.status).font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                if let r = updater.available, !updater.busy {
+                    Button("Install \(r.version)") { Task { await updater.install(r) } }
+                }
+            }
+            Text("Updates come from HyprMac's GitHub releases and are only installed if they're signed by the same developer as this copy.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    /// Choosing Beta asks first, since beta builds can break things.
+    private var channel: Binding<UpdateChannel> {
+        Binding(
+            get: { store.config.updateChannel },
+            set: { new in
+                guard new == .beta, store.config.updateChannel != .beta else {
+                    store.config.updateChannel = new
+                    return
+                }
+                let alert = NSAlert()
+                alert.alertStyle = .warning
+                alert.messageText = "Switch to beta updates?"
+                alert.informativeText = "Beta builds get new features first, but they're less tested and things might break. You can switch back to Stable at any time; you'll keep the beta until the next stable release is newer."
+                alert.addButton(withTitle: "Use Beta Builds")
+                alert.addButton(withTitle: "Stay on Stable")
+                if alert.runModal() == .alertFirstButtonReturn { store.config.updateChannel = .beta }
+            }
+        )
     }
 }
 

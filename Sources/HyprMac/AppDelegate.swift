@@ -46,7 +46,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        WindowManager.shared.restoreAll()
+        WindowManager.shared.prepareForQuit()
     }
 
     private func boot() {
@@ -56,6 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
         WindowManager.shared.start()
+        Updater.shared.start()
         renderStatus()
     }
 
@@ -64,7 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             signal(sig, SIG_IGN)
             let src = DispatchSource.makeSignalSource(signal: sig, queue: .main)
             src.setEventHandler {
-                MainActor.assumeIsolated { WindowManager.shared.restoreAll() }
+                MainActor.assumeIsolated { WindowManager.shared.prepareForQuit() }
                 exit(0)
             }
             src.resume()
@@ -80,6 +81,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",").target = self
         menu.addItem(withTitle: "Keybindings", action: #selector(openCheatSheet), keyEquivalent: "").target = self
         menu.addItem(.separator())
+        menu.addItem(withTitle: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Reload Config", action: #selector(reloadConfig), keyEquivalent: "").target = self
         pauseItem.target = self
         menu.addItem(pauseItem)
@@ -123,6 +125,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func openSettings() { showSettings() }
     @objc private func openCheatSheet() { showCheatSheet() }
     @objc private func reloadConfig() { ConfigStore.shared.reload() }
+    @objc private func checkForUpdates() { Task { await Updater.shared.check(userInitiated: true) } }
     @objc private func togglePause() { WindowManager.shared.setPaused(!WindowManager.shared.paused) }
     @objc private func quit() { NSApp.terminate(nil) }
 
