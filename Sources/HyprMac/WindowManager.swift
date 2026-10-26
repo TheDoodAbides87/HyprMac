@@ -582,7 +582,15 @@ final class WindowManager {
             n = a
         }
         let saved = initial ? relaunchWindows.removeValue(forKey: id) : nil
-        if let saved, (1...10).contains(saved.workspace) { n = saved.workspace }
+        if let saved, (1...10).contains(saved.workspace) {
+            // Just restarted: back exactly where it was.
+            n = saved.workspace
+        } else if initial, let target = ruleWorkspace(for: bundle)
+                    ?? lastWorkspace[bundle].flatMap({ (1...10).contains($0) ? $0 : nil }) {
+            // Fresh start (login, or HyprMac was closed a while): the app's
+            // App Workspace rule, or else the workspace it was last used on.
+            n = target
+        }
         let memory = remembered.removeValue(forKey: id)
         if let memory {
             n = memory.workspace
