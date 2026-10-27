@@ -1298,8 +1298,12 @@ final class WindowManager {
         guard let url = AppCatalog.url(for: id) else { return }
         // An app that isn't running, or is running with no windows, opens a window
         // by itself when launched or switched to; ⌘N on top of that makes two.
+        // Only real windows count: Finder always lists the desktop as a window,
+        // and a minimized window is restored by switching to the app.
         let hadWindow = NSRunningApplication.runningApplications(withBundleIdentifier: id).contains { app in
-            !AX.elements(AXUIElementCreateApplication(app.processIdentifier), kAXWindowsAttribute).isEmpty
+            AX.elements(AXUIElementCreateApplication(app.processIdentifier), kAXWindowsAttribute).contains { el in
+                AX.string(el, kAXSubroleAttribute) == kAXStandardWindowSubrole && AX.bool(el, kAXMinimizedAttribute) != true
+            }
         }
         let conf = NSWorkspace.OpenConfiguration()
         conf.activates = true
