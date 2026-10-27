@@ -2,7 +2,7 @@
 
 A small native tiling window manager for macOS that brings Hyprland's tiling behaviour to the Mac.
 
-![Tiled terminals running btop and fastfetch on HyprMac](docs/screenshots/tiling.jpg)
+![HyprMac tiling new terminal windows into a spiral as they open](docs/screenshots/tiling.gif)
 
 What it does:
 
@@ -23,6 +23,8 @@ What it does:
 It doesn't need SIP turned off and has no dependencies. It's built from Swift source with the Command Line Tools.
 
 ## Screenshots
+
+![Tiled terminals running btop and fastfetch on HyprMac](docs/screenshots/tiling.jpg)
 
 | App launcher (⌥ Option + Space) | Settings, with the windows behind blurred |
 |---|---|
