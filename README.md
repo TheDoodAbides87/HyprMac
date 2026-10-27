@@ -1,6 +1,10 @@
 # HyprMac
 
-A small native tiling window manager for macOS that brings Hyprland's tiling behaviour to the Mac:
+A small native tiling window manager for macOS that brings Hyprland's tiling behaviour to the Mac.
+
+![Tiled terminals running btop and fastfetch on HyprMac](docs/screenshots/tiling.jpg)
+
+What it does:
 
 - **Dwindle layout.** Each new window splits the focused tile along its longer side, so windows form a spiral, the same as Hyprland's default layout.
 - **Workspaces 1–10.** HyprMac runs its own workspaces, like Hyprland, instead of using macOS Spaces. Each display shows one workspace, and switching is instant with no Mission Control animation.
@@ -17,6 +21,12 @@ A small native tiling window manager for macOS that brings Hyprland's tiling beh
 - **A settings window** for every option. You can record shortcuts by pressing them, change the action for any key, set float/ignore rules for apps, and turn on launch at login.
 
 It doesn't need SIP turned off and has no dependencies. It's built from Swift source with the Command Line Tools.
+
+## Screenshots
+
+| App launcher (⌥ Option + Space) | Settings, with the windows behind blurred |
+|---|---|
+| ![The built-in app launcher](docs/screenshots/launcher.jpg) | ![HyprMac Settings showing the Keybindings tab](docs/screenshots/settings.jpg) |
 
 ## Install
 
