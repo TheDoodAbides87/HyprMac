@@ -17,6 +17,14 @@ final class ManagedWindow {
     var floatFrame: CGRect?
     var hidden = false
     var lastSet: CGRect?
+    /// The size and position HyprMac last gave the window. Unlike `lastSet` this
+    /// survives parking (only the position changes), so bringing it back can be
+    /// a move only. Cleared when the app or the user changes the window itself.
+    var knownSize: CGSize?
+    var knownOrigin: CGPoint?
+    /// When HyprMac last moved or resized the window; macOS reports those moves
+    /// back, and reports within a moment of this are HyprMac's own.
+    var ownChangeAt = Date.distantPast
 
     init(id: CGWindowID, pid: pid_t, el: AXUIElement, bundleID: String, workspace: Int) {
         self.id = id
@@ -40,7 +48,11 @@ final class WindowManager {
     static let shared = WindowManager()
 
     var cfg: Config { ConfigStore.shared.config }
-    private(set) var windows: [CGWindowID: ManagedWindow] = [:]
+    private(set) var windows: [CGWindowID: ManagedWindow] = [:] {
+        didSet { if windows.count != oldValue.count { byElement = Dictionary(windows.values.map { ($0.el, $0.id) }, uniquingKeysWith: { a, _ in a }) } }
+    }
+    /// Window lookup by accessibility element, for move/resize reports.
+    private var byElement: [AXUIElement: CGWindowID] = [:]
     private(set) var workspaces: [Int: Workspace] = [:]
     private(set) var active: [CGDirectDisplayID: Int] = [:]
     private(set) var monitors: [Monitor] = []
@@ -68,6 +80,13 @@ final class WindowManager {
     }
     private var popups: [CGWindowID: Popup] = [:]
 
+    /// Windows already ruled out (neither tiles nor dialogs, e.g. apps' hidden
+    /// helper windows), so the rescan doesn't question them every time. They're
+    /// looked at again after `recheckIgnored`, when their app opens a window, or
+    /// when one of them takes focus.
+    private var ignoredWindows: [CGWindowID: (pid: pid_t, since: Date)] = [:]
+    private let recheckIgnored: TimeInterval = 10
+
     /// The floating window, dialog or HyprMac Settings window that has focus.
     /// It gets the glow, and while "keep focus until closed" is on, the tiles
     /// behind it are blurred and can't take focus until it closes.
@@ -77,6 +96,9 @@ final class WindowManager {
         case own
     }
     private var focal: Focal?
+    /// The focal window's frame as of the last check, used where HyprMac can't
+    /// wait on the app, such as deciding about a click as it happens.
+    private var cachedFocalFrame: CGRect?
     private weak var ownFocalWindow: NSWindow?
     /// Whether HyprMac's own focal window is an alert (Dialogue Box) rather than Settings.
     private var ownIsDialog = false
@@ -139,6 +161,10 @@ final class WindowManager {
         let grabBottom: Bool
     }
     private var drag: DragState?
+    /// Tiled mouse-resize redraws at most 60 times a second; the split ratios
+    /// still follow every mouse movement, only the re-layout is batched.
+    private var lastDragLayout = Date.distantPast
+    private var dragLayoutPending = false
 
     private init() {
         for n in 1...10 { workspaces[n] = Workspace(n) }
@@ -148,6 +174,10 @@ final class WindowManager {
 
     func start() {
         guard !started else { return }
+        // Every accessibility question to an app gives up after half a second
+        // (the default is 6 s per question), so one frozen app can't stall HyprMac
+        // or make macOS switch off its keyboard and mouse handling.
+        AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), 0.5)
         reconcileMonitors()
         focusedMonitor = monitors.first?.id ?? 0
         if let front = NSWorkspace.shared.frontmostApplication,
@@ -216,8 +246,9 @@ final class WindowManager {
         screenshotTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
             MainActor.assumeIsolated { self.checkScreenshotEditor() }
         }
-        // Safety net for apps that don't post AX notifications reliably.
-        timer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { _ in
+        // Safety net for apps that don't post AX notifications reliably. Real
+        // changes are reported as they happen, so this can be infrequent.
+        timer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { _ in
             MainActor.assumeIsolated { self.refresh() }
         }
 
@@ -250,9 +281,12 @@ final class WindowManager {
 
     /// Called when HyprMac quits: remember the layout, then bring parked windows back.
     func prepareForQuit() {
+        saveStateWork?.cancel()
         if started && !paused {
             let saved = windows.mapValues { Relaunch.SavedWindow(workspace: $0.workspace, floating: $0.floating) }
             writeState(relaunch: Relaunch(savedAt: Date(), windows: saved, active: active, focusedMonitor: focusedMonitor))
+        } else {
+            saveState()  // a pending batched save still gets written
         }
         restoreAll()
     }
@@ -283,6 +317,16 @@ final class WindowManager {
 
     private func saveState() { writeState(relaunch: nil) }
 
+    /// Workspace changes come in bursts (startup adds every window at once), so
+    /// they're written to disk once, a second after the last one.
+    private var saveStateWork: DispatchWorkItem?
+    private func saveStateSoon() {
+        saveStateWork?.cancel()
+        let item = DispatchWorkItem { MainActor.assumeIsolated { self.saveState() } }
+        saveStateWork = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: item)
+    }
+
     private func writeState(relaunch: Relaunch?) {
         let enc = JSONEncoder()
         enc.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -294,7 +338,7 @@ final class WindowManager {
     private func noteWorkspace(_ bundle: String, _ n: Int) {
         guard !bundle.isEmpty, lastWorkspace[bundle] != n else { return }
         lastWorkspace[bundle] = n
-        saveState()
+        saveStateSoon()
     }
 
     /// Where a launching app's first window should go, if it has a rule.
@@ -502,6 +546,9 @@ final class WindowManager {
         case kAXSheetCreatedNotification:
             sheetAppeared(el)
         case kAXWindowCreatedNotification:
+            // A window can start out unlabeled and become a normal window a moment
+            // later; look at this app's ruled-out windows again.
+            if let pid = pidOf(el) { ignoredWindows = ignoredWindows.filter { $0.value.pid != pid } }
             scheduleRefresh(delay: 0.05)
             scheduleRefresh(delay: 0.5, focus: true)
         default:
@@ -531,6 +578,8 @@ final class WindowManager {
         }
         var seen = Set<CGWindowID>()
         var seenPopups = Set<CGWindowID>()
+        var seenIgnored = Set<CGWindowID>()
+        let now = Date()
         let ignore = Set(cfg.ignoreApps)
         for app in NSWorkspace.shared.runningApplications
         where app.activationPolicy == .regular && app.processIdentifier != getpid() {
@@ -547,6 +596,14 @@ final class WindowManager {
                     if AX.bool(el, kAXMinimizedAttribute) != true { seen.insert(id) }
                     continue
                 }
+                if popups[id] != nil {
+                    seenPopups.insert(id)
+                    continue
+                }
+                if let ignored = ignoredWindows[id], now.timeIntervalSince(ignored.since) < recheckIgnored {
+                    seenIgnored.insert(id)
+                    continue
+                }
                 guard isManageable(el) else {
                     if let kind = popupKind(el) {
                         seenPopups.insert(id)
@@ -555,14 +612,19 @@ final class WindowManager {
                                                bundle: bundle)
                             if !initial { popupAppeared(el, pid: pid, isDialog: kind == .dialog) }
                         }
+                    } else {
+                        ignoredWindows[id] = (pid, now)
+                        seenIgnored.insert(id)
                     }
                     continue
                 }
+                ignoredWindows[id] = nil
                 seen.insert(id)
                 add(el, id: id, pid: pid, bundle: bundle, initial: initial)
             }
         }
         popups = popups.filter { seenPopups.contains($0.key) }
+        ignoredWindows = ignoredWindows.filter { seenIgnored.contains($0.key) }
         if focal != nil { refreshFocal() }
         for (id, w) in windows where !seen.contains(id) {
             switch disappearance(of: w) {
@@ -588,6 +650,11 @@ final class WindowManager {
             syncFocus()
         }
         onStatus?()
+    }
+
+    private func pidOf(_ el: AXUIElement) -> pid_t? {
+        var pid: pid_t = 0
+        return AXUIElementGetPid(el, &pid) == .success ? pid : nil
     }
 
     private func isManageable(_ el: AXUIElement) -> Bool {
@@ -745,9 +812,10 @@ final class WindowManager {
 
     /// (number, visible on a monitor, focused, has windows) for the menu-bar indicator.
     func workspaceStatus() -> [(n: Int, visible: Bool, focused: Bool, occupied: Bool)] {
-        (1...10).map { n in
-            (n, monitorShowing(n) != nil, n == focusedWorkspace, !windows(in: n).isEmpty)
-        }
+        let occupied = Set(windows.values.map(\.workspace))
+        let shown = Set(active.values)
+        let focused = focusedWorkspace
+        return (1...10).map { n in (n, shown.contains(n), n == focused, occupied.contains(n)) }
     }
 
     private var hideCorner: CGPoint {
@@ -760,7 +828,10 @@ final class WindowManager {
         if w.floating, let f = AX.frame(w.el) { w.floatFrame = f }
         w.hidden = true
         w.lastSet = nil
-        AX.setPosition(w.el, hideCorner)
+        w.ownChangeAt = Date()
+        let corner = hideCorner
+        AX.setPosition(w.el, corner)
+        w.knownOrigin = corner
     }
 
     private func hide(workspace n: Int) {
@@ -848,7 +919,10 @@ final class WindowManager {
         w.hidden = false
         if w.lastSet == r { return }
         w.lastSet = r
-        AX.setFrame(w.el, r)
+        w.ownChangeAt = Date()
+        AX.setFrame(w.el, r, knownSize: w.knownSize, knownOrigin: w.knownOrigin)
+        w.knownSize = r.size
+        w.knownOrigin = r.origin
     }
 
     private func rect(_ w: ManagedWindow) -> CGRect? {
@@ -870,8 +944,11 @@ final class WindowManager {
     // MARK: - Focus lock
 
     /// True while a floating window or dialog is open and holding focus.
-    var focalIsHolding: Bool {
-        guard started, !paused, focalFrame != nil else { return false }
+    var focalIsHolding: Bool { focalLevelHolds && focalFrame != nil }
+
+    /// Whether the focal window's level holds focus, without asking its app anything.
+    private var focalLevelHolds: Bool {
+        guard started, !paused else { return false }
         switch focalLevel {
         case .dialogBox?: return true
         case .priority?: return cfg.floatingHoldsFocus
@@ -941,6 +1018,7 @@ final class WindowManager {
 
     private func clearFocal() {
         focal = nil
+        cachedFocalFrame = nil
         blur.hide()
         updateBorder()
     }
@@ -949,10 +1027,11 @@ final class WindowManager {
     /// go once it has closed.
     private func refreshFocal() {
         guard started, !paused, focal != nil else { return }
-        guard focalFrame != nil else {
+        guard let frame = focalFrame else {
             clearFocal()
             return
         }
+        cachedFocalFrame = frame
         if focalIsHolding {
             switch focal {
             case .managed(let id)?, .popup(let id)?: blur.show(below: Int(id))
@@ -989,7 +1068,9 @@ final class WindowManager {
     /// or dialog holds focus. Clicks on that window, on menus and popups, on
     /// other floating windows, the Dock and the menu bar go through.
     func blocksClick(at p: CGPoint) -> Bool {
-        guard focalIsHolding, let f = focalFrame, !f.contains(p) else { return false }
+        // Runs for every click as it happens, so it uses the last known frame
+        // rather than asking the dialog's app (which might be busy).
+        guard focalLevelHolds, let f = cachedFocalFrame, !f.contains(p) else { return false }
         guard let top = topWindowAnyLayer(at: p), top.layer == 0, let w = windows[top.id] else { return false }
         return !w.floating
     }
@@ -1114,7 +1195,8 @@ final class WindowManager {
             focus(c)
         } else {
             // Empty workspace: take focus ourselves so keystrokes don't land in a parked window.
-            NSApp.activate(ignoringOtherApps: true)
+            NSApp.activate()
+            AX.setBool(AXUIElementCreateApplication(getpid()), kAXFrontmostAttribute, true)
             border.hide()
         }
     }
@@ -1133,6 +1215,8 @@ final class WindowManager {
             if focalIsHolding { returnToFocal() } else { border.hide() }
             return
         }
+        // A ruled-out window took focus: it may have become a real window since.
+        if ignoredWindows.removeValue(forKey: id) != nil { scheduleRefresh(focus: true) }
         if popups[id] != nil {
             setFocal(.popup(id))
             return
@@ -1618,7 +1702,7 @@ final class WindowManager {
                 // The grabbed edges follow the pointer, like Hyprland.
                 Dwindle.moveEdge(of: leaf, vertical: true, farEdge: d.grabRight, by: p.x - d.last.x)
                 Dwindle.moveEdge(of: leaf, vertical: false, farEdge: d.grabBottom, by: p.y - d.last.y)
-                apply(d.w.workspace)
+                layoutDuringDrag(d.w.workspace)
             }
         } else {
             var f = d.startFrame
@@ -1637,9 +1721,26 @@ final class WindowManager {
         updateBorder(d.w)
     }
 
+    private func layoutDuringDrag(_ n: Int) {
+        let wait = 1.0 / 60 - Date().timeIntervalSince(lastDragLayout)
+        guard wait > 0 else {
+            lastDragLayout = Date()
+            apply(n)
+            return
+        }
+        guard !dragLayoutPending else { return }
+        dragLayoutPending = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + wait) {
+            self.dragLayoutPending = false
+            self.lastDragLayout = Date()
+            self.apply(n)
+        }
+    }
+
     func endDrag(at p: CGPoint) {
         guard let d = drag else { return }
         drag = nil
+        if d.resize && !d.w.floating { apply(d.w.workspace) }  // the final position, in case one was batched
         if !d.resize && !d.w.floating { dropTiled(d.w, at: p) }
         updateBorder(d.w)
     }
@@ -1734,8 +1835,14 @@ final class WindowManager {
     // MARK: - Geometry changes made by the user
 
     private func geometryChanged(_ el: AXUIElement) {
-        guard let w = windows.values.first(where: { CFEqual($0.el, el) }), !w.hidden else { return }
+        guard let id = byElement[el] ?? windows.values.first(where: { CFEqual($0.el, el) })?.id,
+              let w = windows[id], !w.hidden else { return }
         if w.id == focusedWindow()?.id { updateBorder() }
+        // HyprMac's own move or resize coming back: nothing to interpret.
+        if Date().timeIntervalSince(w.ownChangeAt) < 0.3 { return }
+        // Changed by the app or the user: the size/position HyprMac knew is stale.
+        w.knownSize = nil
+        w.knownOrigin = nil
         if drag != nil { return }
         if w.floating {
             if let f = AX.frame(w.el) {

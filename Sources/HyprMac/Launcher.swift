@@ -15,9 +15,16 @@ final class LauncherModel: ObservableObject {
     private static let countsKey = "launcherCounts"
 
     func reset() {
-        all = AppCatalog.installed(refresh: true)
+        // Show the known apps at once; pick up newly installed or removed ones a
+        // moment later without blocking the launcher on a disk scan.
+        all = AppCatalog.installed()
         query = ""
         filter()
+        AppCatalog.refreshInBackground { [weak self] fresh in
+            guard let self, fresh.map(\.url) != self.all.map(\.url) else { return }
+            self.all = fresh
+            self.filter()
+        }
     }
 
     func icon(_ e: AppEntry) -> NSImage {

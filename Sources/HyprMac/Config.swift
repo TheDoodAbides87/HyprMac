@@ -212,7 +212,6 @@ struct Config: Codable, Equatable {
     var mouseBindings = true
     var focusFollowsMouse = false
     var screenshotWorkspace = true
-    var pointerToDialogs = true
     var pointerFollowsFocus = true
     var floatingHoldsFocus = true
     var updateChannel: UpdateChannel = .stable
@@ -335,7 +334,6 @@ extension Config {
         mouseBindings = try c.decodeIfPresent(Bool.self, forKey: .mouseBindings) ?? def.mouseBindings
         focusFollowsMouse = try c.decodeIfPresent(Bool.self, forKey: .focusFollowsMouse) ?? def.focusFollowsMouse
         screenshotWorkspace = try c.decodeIfPresent(Bool.self, forKey: .screenshotWorkspace) ?? def.screenshotWorkspace
-        pointerToDialogs = try c.decodeIfPresent(Bool.self, forKey: .pointerToDialogs) ?? def.pointerToDialogs
         pointerFollowsFocus = try c.decodeIfPresent(Bool.self, forKey: .pointerFollowsFocus) ?? def.pointerFollowsFocus
         floatingHoldsFocus = try c.decodeIfPresent(Bool.self, forKey: .floatingHoldsFocus) ?? def.floatingHoldsFocus
         updateChannel = try c.decodeIfPresent(UpdateChannel.self, forKey: .updateChannel) ?? def.updateChannel

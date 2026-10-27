@@ -158,6 +158,8 @@ final class InputTap {
 final class BorderOverlay {
     private let window: NSWindow
     private let box = NSView()
+    private var colorHex = ""
+    private var color = NSColor.clear.cgColor
 
     init() {
         window = NSWindow(contentRect: .zero, styleMask: .borderless, backing: .buffered, defer: false)
@@ -178,9 +180,13 @@ final class BorderOverlay {
         let r = CGRect(x: axFrame.minX, y: h - axFrame.maxY, width: axFrame.width, height: axFrame.height)
             .insetBy(dx: -bw, dy: -bw)
         window.setFrame(r, display: true)
+        if cfg.activeBorderColor != colorHex {
+            colorHex = cfg.activeBorderColor
+            color = NSColor(hex: colorHex).cgColor
+        }
         if let layer = box.layer {
             layer.borderWidth = bw
-            layer.borderColor = NSColor(hex: cfg.activeBorderColor).cgColor
+            layer.borderColor = color
             layer.cornerRadius = CGFloat(cfg.borderRadius) + bw
         }
         window.orderFrontRegardless()

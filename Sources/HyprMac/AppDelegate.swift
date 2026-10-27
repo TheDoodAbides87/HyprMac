@@ -102,10 +102,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     }
 
     /// Waybar-style workspace indicator: occupied workspaces listed, focused one highlighted.
+    /// What the indicator last showed, so it's only redrawn when that changes.
+    private var lastStatusKey = ""
+
     func renderStatus() {
         guard let button = statusItem?.button else { return }
         let wm = WindowManager.shared
-        if !AXIsProcessTrusted() || !wm.started {
+        let status = wm.started ? wm.workspaceStatus() : []
+        let key = "\(wm.started)|\(wm.paused)|" + status.map { "\($0.n)\($0.visible ? "v" : "")\($0.focused ? "f" : "")\($0.occupied ? "o" : "")" }.joined(separator: ",")
+        guard key != lastStatusKey else { return }
+        lastStatusKey = key
+        if !wm.started {
             button.attributedTitle = NSAttributedString(string: "HyprMac ⚠︎")
             return
         }
@@ -116,7 +123,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         let out = NSMutableAttributedString()
         let font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
         let bold = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .heavy)
-        for s in wm.workspaceStatus() where s.occupied || s.visible {
+        for s in status where s.occupied || s.visible {
             let label = s.n == 10 ? "0" : "\(s.n)"
             let attrs: [NSAttributedString.Key: Any] = [
                 .font: s.focused ? bold : font,

@@ -75,6 +75,19 @@ enum AX {
         setSize(el, r.size)
     }
 
+    /// Like setFrame, but with one call instead of three when only the position
+    /// or only the size differs from `knownSize` / `knownOrigin` (what the window
+    /// is known to have). Bringing a parked window back is usually a move only.
+    static func setFrame(_ el: AXUIElement, _ r: CGRect, knownSize: CGSize?, knownOrigin: CGPoint?) {
+        if knownSize == r.size {
+            setPosition(el, r.origin)
+        } else if knownOrigin == r.origin {
+            setSize(el, r.size)
+        } else {
+            setFrame(el, r)
+        }
+    }
+
     static func windowID(_ el: AXUIElement) -> CGWindowID? {
         var id: CGWindowID = 0
         return _AXUIElementGetWindow(el, &id) == .success && id != 0 ? id : nil

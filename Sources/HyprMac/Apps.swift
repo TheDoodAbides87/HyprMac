@@ -16,9 +16,25 @@ enum AppCatalog {
     /// Sorted by name. Pass `refresh` to rescan the disk.
     static func installed(refresh: Bool = false) -> [AppEntry] {
         if let cache, !refresh { return cache }
-        let list = scan().sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        let list = sortedScan()
         cache = list
         return list
+    }
+
+    /// Rescans the app folders off the main thread and hands back the fresh
+    /// list, so opening the launcher never waits on the disk.
+    static func refreshInBackground(_ done: @escaping @MainActor ([AppEntry]) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let list = sortedScan()
+            DispatchQueue.main.async {
+                cache = list
+                done(list)
+            }
+        }
+    }
+
+    nonisolated private static func sortedScan() -> [AppEntry] {
+        scan().sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
     static func url(for bundleID: String) -> URL? {
@@ -48,7 +64,7 @@ enum AppCatalog {
         ids.first { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) != nil }
     }
 
-    private static func scan() -> [AppEntry] {
+    nonisolated private static func scan() -> [AppEntry] {
         let fm = FileManager.default
         let dirs = ["/Applications", "/Applications/Utilities", "/System/Applications",
                     "/System/Applications/Utilities", NSHomeDirectory() + "/Applications"]
