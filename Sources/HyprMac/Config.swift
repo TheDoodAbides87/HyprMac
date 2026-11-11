@@ -225,7 +225,7 @@ struct Config: Codable, Equatable {
     var borderRadius: Double = 12
     var activeBorderColor = "#33CCFF"
     var mouseBindings = true
-    /// Omarchy's follow_mouse = 1.
+    /// Hover to focus (Hyprland's follow_mouse = 1).
     var focusFollowsMouse = true
     var screenshotWorkspace = true
     var pointerFollowsFocus = true
@@ -233,11 +233,12 @@ struct Config: Codable, Equatable {
     var autoCheckUpdates = true
     var autoInstallUpdates = true
     var resizeStep: Double = 100
-    /// No gaps and no border (Omarchy's window-no-gaps toggle).
+    /// No gaps and no border.
     var gapsOff = false
-    /// A workspace's only tile is kept square (Omarchy's single_window_aspect_ratio = 1:1 toggle).
+    /// A workspace's only tile is kept square (Hyprland's single_window_aspect_ratio = 1 1).
     var singleWindowSquare = false
-    /// Omarchy floats its calculator, btop, image and video viewers, document viewer and About windows.
+    /// Utility apps and viewers that work best floating: settings, calculator, archive and
+    /// password tools, FaceTime, Activity Monitor, and image, document and video viewers.
     var floatApps: [String] = [
         "com.apple.systempreferences",
         "com.apple.calculator",
@@ -271,11 +272,11 @@ struct Config: Codable, Equatable {
     /// Default shortcuts added after the first release, by the version that added them.
     static let addedBindings: [AddedBinding] =
         [AddedBinding(version: 2, bind: .init(["super", "shift"], "w", .quitapp))]
-        + omarchyBindings().map { AddedBinding(version: 3, bind: $0, evenIfBound: $0.action == .close) }
+        + windowManagementBindings().map { AddedBinding(version: 3, bind: $0, evenIfBound: $0.action == .close) }
 
-    /// Omarchy's window-management shortcuts added in 1.5 (default/hypr/bindings/tiling.lua
-    /// and applications.lua). Omarchy's SUPER is "super", its ALT is "alt".
-    static func omarchyBindings() -> [Keybind] {
+    /// The window-management shortcuts added in 1.5: extra app shortcuts, scratchpad,
+    /// pop-out, monitors, finer and coarser resizing, and silent moves.
+    static func windowManagementBindings() -> [Keybind] {
         var b: [Keybind] = [
             .init(["super", "shift"], "return", .openapp, Apps.browser, newWindow: true),
             .init(["super", "shift"], "q", .openapp, "com.apple.calculator"),
@@ -386,7 +387,7 @@ struct Config: Codable, Equatable {
             .init(["super", "ctrl"], "tab", .workspaceformer),
             .init(["super", "ctrl"], "escape", .pause),
         ]
-        return b + omarchyBindings()
+        return b + windowManagementBindings()
     }
 }
 

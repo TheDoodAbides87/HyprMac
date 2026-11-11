@@ -32,6 +32,11 @@ final class InputTap {
     private var dragging = false
     /// A click that's being ignored because a floating window holds focus.
     private var blockingClick = false
+    /// The latest pointer position not handed to the window manager yet. The
+    /// pointer reports up to 120+ moves a second; only the newest one matters,
+    /// so a burst queues one update instead of one per move.
+    private var pendingMove: CGPoint?
+    private var pendingDrag: CGPoint?
 
     func rebuild(_ cfg: Config) {
         var t: [Combo: Keybind] = [:]
@@ -107,8 +112,14 @@ final class InputTap {
         case .leftMouseDragged, .rightMouseDragged:
             if blockingClick { return false }
             guard dragging else { return true }
-            let p = e.location
-            DispatchQueue.main.async { wm.dragMoved(to: p) }
+            if pendingDrag == nil {
+                DispatchQueue.main.async {
+                    guard let p = self.pendingDrag else { return }
+                    self.pendingDrag = nil
+                    wm.dragMoved(to: p)
+                }
+            }
+            pendingDrag = e.location
             return false
 
         case .leftMouseUp, .rightMouseUp:
@@ -132,8 +143,14 @@ final class InputTap {
 
         case .mouseMoved:
             guard followMouse else { return true }
-            let p = e.location
-            DispatchQueue.main.async { wm.focusFollowsMouse(at: p) }
+            if pendingMove == nil {
+                DispatchQueue.main.async {
+                    guard let p = self.pendingMove else { return }
+                    self.pendingMove = nil
+                    wm.focusFollowsMouse(at: p)
+                }
+            }
+            pendingMove = e.location
             return true
 
         default:

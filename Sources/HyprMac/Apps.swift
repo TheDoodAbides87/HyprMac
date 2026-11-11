@@ -12,6 +12,10 @@ struct AppEntry: Identifiable {
 enum AppCatalog {
     private static var cache: [AppEntry]?
     private static var icons: [String: NSImage] = [:]
+    /// Found apps by bundle ID. Settings redraws its keybinding list often and
+    /// looks up every app shortcut's app each time. Misses aren't kept, so an app
+    /// installed later is still found.
+    private static var urls: [String: URL] = [:]
 
     /// Sorted by name. Pass `refresh` to rescan the disk.
     static func installed(refresh: Bool = false) -> [AppEntry] {
@@ -40,7 +44,10 @@ enum AppCatalog {
     static func url(for bundleID: String) -> URL? {
         guard !bundleID.isEmpty else { return nil }
         if bundleID.hasPrefix("/") { return URL(fileURLWithPath: bundleID) }
-        return NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+        if let u = urls[bundleID], FileManager.default.fileExists(atPath: u.path) { return u }
+        let u = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+        urls[bundleID] = u
+        return u
     }
 
     static func name(for bundleID: String) -> String? {

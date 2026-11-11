@@ -217,7 +217,10 @@ final class WindowManager {
                 self.scheduleRefresh()
             }
         })
-        for name in [NSWorkspace.didActivateApplicationNotification, NSWorkspace.activeSpaceDidChangeNotification,
+        tokens.append(wnc.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { self.scheduleFocusSync() }
+        })
+        for name in [NSWorkspace.activeSpaceDidChangeNotification,
                      NSWorkspace.didHideApplicationNotification, NSWorkspace.didUnhideApplicationNotification] {
             tokens.append(wnc.addObserver(forName: name, object: nil, queue: .main) { _ in
                 MainActor.assumeIsolated { self.scheduleRefresh(focus: true) }
@@ -548,7 +551,7 @@ final class WindowManager {
         case kAXWindowMovedNotification, kAXWindowResizedNotification:
             geometryChanged(el)
         case kAXFocusedWindowChangedNotification:
-            scheduleRefresh(focus: true)
+            scheduleFocusSync()
         case kAXSheetCreatedNotification:
             sheetAppeared(el)
         case kAXWindowCreatedNotification:
@@ -559,6 +562,26 @@ final class WindowManager {
             scheduleRefresh(delay: 0.5, focus: true)
         default:
             scheduleRefresh()
+        }
+    }
+
+    private var focusSyncScheduled = false
+
+    /// Focus moved (an app switch, a click, hover): adopt it without rescanning
+    /// every app's windows, which a focus change doesn't alter. A window HyprMac
+    /// doesn't know yet still gets a full rescan (see syncFocus).
+    private func scheduleFocusSync() {
+        guard !focusSyncScheduled else { return }
+        focusSyncScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) {
+            self.focusSyncScheduled = false
+            // A rescan already on its way syncs focus when it finishes.
+            if self.refreshScheduled {
+                self.focusPending = true
+                return
+            }
+            guard self.started, !self.paused, !self.asleep else { return }
+            self.syncFocus(rescanUnknown: true)
         }
     }
 
@@ -721,7 +744,7 @@ final class WindowManager {
         w.floating = memory?.floating ?? saved?.floating ?? shouldFloat(el, bundle: bundle)
         let pipScreen = (monitorShowing(n) ?? ws.monitor).flatMap(monitor) ?? monitor(focusedMonitor)
         if memory == nil, isPictureInPicture(el), let m = pipScreen {
-            // Omarchy's pip rule: float, pin, 600x338, top right, 40 px in and 4% down.
+            // Picture in Picture: float, pin, 600x338, top right, 40 px in and 4% down.
             w.floating = true
             w.pinned = true
             w.floatFrame = CGRect(x: m.frame.maxX - 600 - 40, y: max(m.visible.minY, m.frame.minY + m.frame.height * 0.04),
@@ -929,7 +952,7 @@ final class WindowManager {
                     r = CGRect(x: r.midX - size.width / 2, y: r.midY - size.height / 2, width: size.width, height: size.height)
                 }
                 if cfg.singleWindowSquare, root.isLeaf {
-                    // Omarchy's single_window_aspect_ratio = 1:1.
+                    // Hyprland's single_window_aspect_ratio = 1 1.
                     let side = min(r.width, r.height)
                     r = CGRect(x: r.midX - side / 2, y: r.midY - side / 2, width: side, height: side)
                 }
@@ -1294,7 +1317,9 @@ final class WindowManager {
     }
 
     /// Adopt focus changes made outside HyprMac (clicks, ⌘-Tab, Dock).
-    private func syncFocus() {
+    /// `rescanUnknown`: a window HyprMac hasn't seen took focus, so look for new
+    /// windows (off when called from the rescan itself).
+    private func syncFocus(rescanUnknown: Bool = false) {
         guard started, !paused else { return }
         guard Date() > suppressFocusUntil else { updateBorder(); return }
         guard let app = NSWorkspace.shared.frontmostApplication, app.processIdentifier != getpid() else {
@@ -1315,6 +1340,7 @@ final class WindowManager {
         }
         guard let w = windows[id] else {
             border.hide()
+            if rescanUnknown { scheduleRefresh(focus: true) }
             return
         }
         if scratchpadOn != nil, w.workspace != Self.scratchpad, !w.pinned { closeScratchpad(refocus: false) }
@@ -1357,6 +1383,12 @@ final class WindowManager {
             border.hide()
             return
         }
+        border.show(f, cfg: cfg, above: Int(w.id))
+    }
+
+    /// The border around `w` at a frame HyprMac already knows (e.g. mid-drag).
+    private func showBorder(_ f: CGRect, for w: ManagedWindow) {
+        guard cfg.borderEnabled, !cfg.gapsOff, !paused else { return border.hide() }
         border.show(f, cfg: cfg, above: Int(w.id))
     }
 
@@ -1740,7 +1772,7 @@ final class WindowManager {
         updateBorder()
     }
 
-    /// Omarchy's Super+O: float the window at 1300x900, centered, and pin it so
+    /// Pop out: float the window at 1300x900, centered, and pin it so
     /// it stays on screen across workspace switches. Again to put it back.
     private func togglePop() {
         guard let w = focusedWindow(), let ws = workspaces[w.workspace],
@@ -1764,7 +1796,7 @@ final class WindowManager {
         updateBorder()
     }
 
-    /// Omarchy's Ctrl+Alt+Delete: close every window (apps can still ask to
+    /// Close every window (apps can still ask to
     /// save), then go to workspace 1.
     private func closeAll() {
         for w in windows.values {
@@ -1835,7 +1867,7 @@ final class WindowManager {
         onStatus?()
     }
 
-    /// Omarchy floats and pins windows titled "Picture in Picture" (browsers' PiP).
+    /// Windows titled "Picture in Picture" (browsers' PiP) float and pin.
     private func isPictureInPicture(_ el: AXUIElement) -> Bool {
         guard let title = AX.string(el, kAXTitleAttribute) else { return false }
         return title.range(of: "Picture.?in.?picture", options: [.regularExpression, .caseInsensitive]) != nil
@@ -1945,7 +1977,13 @@ final class WindowManager {
         }
         d.last = p
         drag = d
-        updateBorder(d.w)
+        // The frame was just set (or laid out); no need to ask the app for it.
+        if let f = d.w.lastSet ?? (d.resize ? nil : CGRect(origin: CGPoint(x: d.startFrame.minX + dx, y: d.startFrame.minY + dy),
+                                                           size: d.startFrame.size)) {
+            showBorder(f, for: d.w)
+        } else {
+            updateBorder(d.w)
+        }
     }
 
     private func layoutDuringDrag(_ n: Int) {
@@ -2020,19 +2058,19 @@ final class WindowManager {
         if focalIsHolding || popupHasFocus { return }
         // Hovering past the scratchpad shouldn't close it; a click does.
         if scratchpadOn != nil { return }
-        if let settings, let top = topWindowNumber(at: p, including: settings), top == settings.windowNumber {
-            // Hovering HyprMac's Settings focuses it.
-            if !(NSApp.isActive && NSApp.keyWindow === settings) {
-                AppDelegate.shared?.bringForward(settings)
-                setOwnFocal(settings)
-            }
-            return
-        }
-        guard let top = topWindowID(at: p) else {
+        guard let top = topWindowID(at: p, including: settings) else {
             // Over the empty desktop: just remember which display the pointer is on.
             if let m = monitors.first(where: { $0.frame.contains(p) }), m.id != focusedMonitor {
                 focusedMonitor = m.id
                 onStatus?()
+            }
+            return
+        }
+        if let settings, Int(top) == settings.windowNumber {
+            // Hovering HyprMac's Settings focuses it.
+            if !(NSApp.isActive && NSApp.keyWindow === settings) {
+                AppDelegate.shared?.bringForward(settings)
+                setOwnFocal(settings)
             }
             return
         }
@@ -2054,34 +2092,18 @@ final class WindowManager {
         return windows[id] == nil
     }
 
-    /// The number of the frontmost normal window under a point, counting
-    /// `own` (one of HyprMac's windows) but not HyprMac's other windows.
-    private func topWindowNumber(at p: CGPoint, including own: NSWindow) -> Int? {
-        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
-                as? [[String: Any]] else { return nil }
-        let me = getpid()
-        for info in list {
-            guard let pid = (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value,
-                  let n = (info[kCGWindowNumber as String] as? NSNumber)?.intValue,
-                  pid != me || n == own.windowNumber,
-                  let layer = (info[kCGWindowLayer as String] as? NSNumber)?.intValue, (0..<20).contains(layer),
-                  ((info[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1) > 0,
-                  let bounds = info[kCGWindowBounds as String] as? NSDictionary,
-                  let r = CGRect(dictionaryRepresentation: bounds), r.contains(p) else { continue }
-            return n
-        }
-        return nil
-    }
-
     /// The frontmost window under a point, in macOS's real stacking order, so
     /// windows HyprMac doesn't manage count too. Ignores the Dock, menu bar and
-    /// screen-wide overlays (layer 20 and up) and HyprMac's own border.
-    private func topWindowID(at p: CGPoint) -> CGWindowID? {
+    /// screen-wide overlays (layer 20 and up) and HyprMac's own windows, except
+    /// `own` (HyprMac's Settings) when given.
+    private func topWindowID(at p: CGPoint, including own: NSWindow? = nil) -> CGWindowID? {
         guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
                 as? [[String: Any]] else { return nil }
         let me = getpid()
+        let ownNumber = own?.windowNumber
         for info in list {
-            guard let pid = (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value, pid != me,
+            guard let pid = (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value,
+                  pid != me || (info[kCGWindowNumber as String] as? NSNumber)?.intValue == ownNumber,
                   let layer = (info[kCGWindowLayer as String] as? NSNumber)?.intValue, (0..<20).contains(layer),
                   ((info[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1) > 0,
                   let bounds = info[kCGWindowBounds as String] as? NSDictionary,
