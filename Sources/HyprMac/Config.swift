@@ -38,8 +38,11 @@ enum Action: String, Codable, CaseIterable, Identifiable {
     case focus, swap
     case workspace, movetoworkspace, movetoworkspacesilent
     case workspacenext, workspaceprev, workspaceformer
-    case close, quitapp, togglefloating, fullscreen, maximize, togglesplit, pseudo
+    case close, closeall, quitapp, minimize, togglefloating, pop, fullscreen, maximize, togglesplit, pseudo
     case resizewidth, resizeheight
+    case scratchpad, movetoscratchpad
+    case focusmonitor, movewindowtomonitor, moveworkspacetomonitor
+    case togglegaps, togglesquare
     case openapp, exec, launcher, spotlight, showkeys, settings, reload, pause
 
     var id: String { rawValue }
@@ -55,14 +58,24 @@ enum Action: String, Codable, CaseIterable, Identifiable {
         case .workspaceprev: "Previous workspace"
         case .workspaceformer: "Former workspace"
         case .close: "Close window"
+        case .closeall: "Close all windows"
         case .quitapp: "Quit app"
+        case .minimize: "Minimize window"
         case .togglefloating: "Toggle floating"
+        case .pop: "Pop window out (float & pin)"
         case .fullscreen: "Fullscreen"
         case .maximize: "Maximize (keep gaps)"
         case .togglesplit: "Toggle split direction"
         case .pseudo: "Pseudo-tile"
         case .resizewidth: "Resize width"
         case .resizeheight: "Resize height"
+        case .scratchpad: "Toggle scratchpad"
+        case .movetoscratchpad: "Move window to scratchpad"
+        case .focusmonitor: "Focus next/previous monitor"
+        case .movewindowtomonitor: "Move window to monitor"
+        case .moveworkspacetomonitor: "Move workspace to monitor"
+        case .togglegaps: "Toggle gaps and border"
+        case .togglesquare: "Toggle single-window square"
         case .openapp: "Open app"
         case .exec: "Run command"
         case .launcher: "App launcher"
@@ -81,7 +94,8 @@ enum Action: String, Codable, CaseIterable, Identifiable {
 
     var argHint: String? {
         switch self {
-        case .focus, .swap: "left | right | up | down"
+        case .focus, .swap, .movewindowtomonitor, .moveworkspacetomonitor: "left | right | up | down"
+        case .focusmonitor: "next | prev"
         case .workspace, .movetoworkspace, .movetoworkspacesilent: "1 – 10"
         case .resizewidth, .resizeheight: "+ / − or pixels, e.g. -100"
         case .exec: "shell command"
@@ -150,7 +164,8 @@ struct Keybind: Codable, Identifiable, Hashable {
 
     var summary: String {
         switch action {
-        case .focus, .swap: "\(action.title) \(arg)"
+        case .focus, .swap, .movewindowtomonitor, .moveworkspacetomonitor: "\(action.title) \(arg)"
+        case .focusmonitor: arg.lowercased().hasPrefix("p") ? "Focus previous monitor" : "Focus next monitor"
         case .workspace, .movetoworkspace, .movetoworkspacesilent: "\(action.title) \(arg)"
         case .resizewidth, .resizeheight: "\(action.title) \(arg)"
         case .openapp: MainActor.assumeIsolated { AppCatalog.name(for: arg) } ?? "Open app"
@@ -210,36 +225,92 @@ struct Config: Codable, Equatable {
     var borderRadius: Double = 12
     var activeBorderColor = "#33CCFF"
     var mouseBindings = true
-    var focusFollowsMouse = false
+    /// Omarchy's follow_mouse = 1.
+    var focusFollowsMouse = true
     var screenshotWorkspace = true
     var pointerFollowsFocus = true
-    var floatingHoldsFocus = true
     var updateChannel: UpdateChannel = .stable
     var autoCheckUpdates = true
     var autoInstallUpdates = true
     var resizeStep: Double = 100
+    /// No gaps and no border (Omarchy's window-no-gaps toggle).
+    var gapsOff = false
+    /// A workspace's only tile is kept square (Omarchy's single_window_aspect_ratio = 1:1 toggle).
+    var singleWindowSquare = false
+    /// Omarchy floats its calculator, btop, image and video viewers, document viewer and About windows.
     var floatApps: [String] = [
         "com.apple.systempreferences",
         "com.apple.calculator",
         "com.apple.archiveutility",
         "com.apple.FaceTime",
         "com.apple.Passwords",
+        "com.apple.ActivityMonitor",
+        "com.apple.Preview",
+        "com.apple.QuickTimePlayerX",
+        "com.colliderli.iina",
+        "io.mpv",
     ]
     var ignoreApps: [String] = []
-    /// Apps whose floating windows are treated like dialogs (Priority): they keep focus and blur the windows behind.
-    var priorityApps: [String] = []
+    /// Apps whose floating windows keep focus until closed (like Hyprland's stayfocused).
+    var stayFocusedApps: [String] = []
     var appRules: [AppRule] = []
     var bindings: [Keybind] = Config.defaultBindings()
     /// Which default shortcuts this config has been offered, so ones added in
     /// later versions show up once for existing users (and stay deleted if removed).
     var bindingsVersion = Config.currentBindingsVersion
 
-    static let currentBindingsVersion = 2
+    static let currentBindingsVersion = 3
+
+    struct AddedBinding {
+        let version: Int
+        let bind: Keybind
+        /// Added even if another shortcut already does the same thing (e.g. a second Close key).
+        var evenIfBound = false
+    }
 
     /// Default shortcuts added after the first release, by the version that added them.
-    static let addedBindings: [(version: Int, bind: Keybind)] = [
-        (2, .init(["super", "shift"], "w", .quitapp)),
-    ]
+    static let addedBindings: [AddedBinding] =
+        [AddedBinding(version: 2, bind: .init(["super", "shift"], "w", .quitapp))]
+        + omarchyBindings().map { AddedBinding(version: 3, bind: $0, evenIfBound: $0.action == .close) }
+
+    /// Omarchy's window-management shortcuts added in 1.5 (default/hypr/bindings/tiling.lua
+    /// and applications.lua). Omarchy's SUPER is "super", its ALT is "alt".
+    static func omarchyBindings() -> [Keybind] {
+        var b: [Keybind] = [
+            .init(["super", "shift"], "return", .openapp, Apps.browser, newWindow: true),
+            .init(["super", "shift"], "q", .openapp, "com.apple.calculator"),
+            .init(["super", "shift"], "slash", .openapp, "com.apple.Passwords"),
+            .init(["super"], "q", .close),
+            .init(["ctrl", "alt"], "delete", .closeall),
+            .init(["super"], "m", .minimize),
+            .init(["super"], "o", .pop),
+            .init(["super"], "s", .scratchpad),
+            .init(["super", "alt"], "s", .movetoscratchpad),
+            .init(["super", "shift"], "backspace", .togglegaps),
+            .init(["super", "ctrl"], "backspace", .togglesquare),
+            .init(["ctrl", "alt"], "tab", .focusmonitor, "next"),
+            .init(["ctrl", "alt", "shift"], "tab", .focusmonitor, "prev"),
+        ]
+        for d in ["left", "right", "up", "down"] {
+            b.append(.init(["super", "shift", "ctrl"], d, .movewindowtomonitor, d))
+        }
+        for d in ["left", "right", "up", "down"] {
+            b.append(.init(["super", "shift", "alt"], d, .moveworkspacetomonitor, d))
+        }
+        // A little (25 px) and a lot (300 px), beside the normal step.
+        for (mod, px) in [("alt", 25), ("ctrl", 300)] {
+            b += [
+                .init(["super", mod], "minus", .resizewidth, "-\(px)"),
+                .init(["super", mod], "equal", .resizewidth, "\(px)"),
+                .init(["super", "shift", mod], "minus", .resizeheight, "-\(px)"),
+                .init(["super", "shift", mod], "equal", .resizeheight, "\(px)"),
+            ]
+        }
+        for i in 1...10 {
+            b.append(.init(["super", "shift", "alt"], i == 10 ? "0" : "\(i)", .movetoworkspacesilent, "\(i)"))
+        }
+        return b
+    }
 
     func flags(for mods: [String]) -> CGEventFlags {
         var f: CGEventFlags = []
@@ -315,7 +386,7 @@ struct Config: Codable, Equatable {
             .init(["super", "ctrl"], "tab", .workspaceformer),
             .init(["super", "ctrl"], "escape", .pause),
         ]
-        return b
+        return b + omarchyBindings()
     }
 }
 
@@ -335,21 +406,23 @@ extension Config {
         focusFollowsMouse = try c.decodeIfPresent(Bool.self, forKey: .focusFollowsMouse) ?? def.focusFollowsMouse
         screenshotWorkspace = try c.decodeIfPresent(Bool.self, forKey: .screenshotWorkspace) ?? def.screenshotWorkspace
         pointerFollowsFocus = try c.decodeIfPresent(Bool.self, forKey: .pointerFollowsFocus) ?? def.pointerFollowsFocus
-        floatingHoldsFocus = try c.decodeIfPresent(Bool.self, forKey: .floatingHoldsFocus) ?? def.floatingHoldsFocus
         updateChannel = try c.decodeIfPresent(UpdateChannel.self, forKey: .updateChannel) ?? def.updateChannel
         autoCheckUpdates = try c.decodeIfPresent(Bool.self, forKey: .autoCheckUpdates) ?? def.autoCheckUpdates
         autoInstallUpdates = try c.decodeIfPresent(Bool.self, forKey: .autoInstallUpdates) ?? def.autoInstallUpdates
         resizeStep = try c.decodeIfPresent(Double.self, forKey: .resizeStep) ?? def.resizeStep
+        gapsOff = try c.decodeIfPresent(Bool.self, forKey: .gapsOff) ?? def.gapsOff
+        singleWindowSquare = try c.decodeIfPresent(Bool.self, forKey: .singleWindowSquare) ?? def.singleWindowSquare
         floatApps = try c.decodeIfPresent([String].self, forKey: .floatApps) ?? def.floatApps
         ignoreApps = try c.decodeIfPresent([String].self, forKey: .ignoreApps) ?? def.ignoreApps
-        priorityApps = try c.decodeIfPresent([String].self, forKey: .priorityApps) ?? def.priorityApps
+        stayFocusedApps = try c.decodeIfPresent([String].self, forKey: .stayFocusedApps) ?? def.stayFocusedApps
         appRules = try c.decodeIfPresent([AppRule].self, forKey: .appRules) ?? def.appRules
         bindings = (try c.decodeIfPresent([Keybind].self, forKey: .bindings) ?? def.bindings).map { $0.migrated() }
         // Older configs: add shortcuts introduced since, unless that key combination is taken.
         let version = try c.decodeIfPresent(Int.self, forKey: .bindingsVersion) ?? 1
         for added in Config.addedBindings where added.version > version {
             let taken = bindings.contains { physicalComboKey($0) == physicalComboKey(added.bind) }
-            if !taken && !bindings.contains(where: { $0.action == added.bind.action }) { bindings.append(added.bind) }
+            let bound = bindings.contains { $0.action == added.bind.action && $0.arg == added.bind.arg }
+            if !taken && (added.evenIfBound || !bound) { bindings.append(added.bind) }
         }
         bindingsVersion = Config.currentBindingsVersion
     }

@@ -152,7 +152,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
                              backing: .buffered, defer: false)
             w.title = "HyprMac Settings"
             w.isReleasedWhenClosed = false
-            // Settings floats above other windows so it can't get lost behind tiles.
+            // Settings is in the floating layer: pinned above the tiles, but let
+            // down to the normal level while another app's dialog is on screen
+            // (see setSettingsAboveTiles) so the dialog stays above it.
             w.level = .floating
             w.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
             w.center()
@@ -182,6 +184,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     /// Since macOS 14 a menu-bar app asking to activate is often refused when
     /// another app is in front (as when Settings is opened with a shortcut),
     /// so HyprMac also asks the way it brings other apps forward.
+    /// HyprMac's Settings window while it's on screen.
+    var visibleSettingsWindow: NSWindow? {
+        guard let w = settingsWindow, w.isVisible, !w.isMiniaturized else { return nil }
+        return w
+    }
+
+    /// Pins Settings above all normal windows (no tile can cover it, even for a
+    /// moment), or lets it down to the normal level so other apps' dialogs can
+    /// go above it.
+    /// Returns whether the level changed.
+    @discardableResult
+    func setSettingsAboveTiles(_ above: Bool) -> Bool {
+        guard let w = settingsWindow else { return false }
+        let level: NSWindow.Level = above ? .floating : .normal
+        guard w.level != level else { return false }
+        w.level = level
+        return true
+    }
+
+    /// HyprMac's own floating-layer windows (Settings), put back over the tiles
+    /// without taking focus.
+    func raiseOwnFloatingWindows() {
+        guard let w = settingsWindow, w.isVisible, !w.isMiniaturized else { return }
+        w.orderFrontRegardless()
+    }
+
     func bringForward(_ w: NSWindow) {
         NSApp.activate()
         AX.setBool(AXUIElementCreateApplication(getpid()), kAXFrontmostAttribute, true)

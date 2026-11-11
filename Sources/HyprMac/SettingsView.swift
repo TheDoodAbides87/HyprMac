@@ -75,13 +75,15 @@ private struct GeneralTab: View {
                     Text("On hover").tag(true)
                 }
                 .pickerStyle(.segmented)
-                Toggle("Priority windows keep focus until closed", isOn: $store.config.floatingHoldsFocus)
-                    .help("HyprMac's Settings and floating windows from Priority apps (Window Rules) blur the windows behind them, which can't take focus until you close them. Dialog boxes always do this and always get the pointer. Other floating windows just stay on top.")
                 Toggle("Move the pointer to the focused window", isOn: $store.config.pointerFollowsFocus)
                     .help("When you move focus with the keyboard or open a new window, the pointer jumps to the middle of that window.")
                 Toggle("Open screenshots on an empty workspace", isOn: $store.config.screenshotWorkspace)
                     .help("When you click a screenshot thumbnail to edit it, switch to an empty workspace, and switch back when you're done.")
                 LabeledSlider(title: "Resize step (px)", value: $store.config.resizeStep, range: 20...300, step: 10)
+                Toggle("No gaps or border", isOn: $store.config.gapsOff)
+                    .help("Tiles fill the screen edge to edge, without the active border. Same as the Toggle gaps and border shortcut.")
+                Toggle("Keep a workspace's only window square", isOn: $store.config.singleWindowSquare)
+                    .help("When a workspace has one tiled window, it's kept square and centered instead of filling a wide screen. Same as the Toggle single-window square shortcut.")
             }
         }
         .formStyle(.grouped)
@@ -444,11 +446,11 @@ private struct RulesTab: View {
     var body: some View {
         HStack(alignment: .top, spacing: 16) {
             BundleList(title: "Always float",
-                       subtitle: "Windows from these apps open floating instead of tiled. The Toggle floating shortcut still works on them.",
+                       subtitle: "Windows from these apps open floating instead of tiled, and stay above the tiles. The Toggle floating shortcut still works on them.",
                        items: $store.config.floatApps)
-            BundleList(title: "Priority",
-                       subtitle: "Floating windows from these apps keep focus until closed, with the windows behind blurred. Dialog boxes always do this and always get the pointer; HyprMac's Settings does too. Other floating windows just stay on top.",
-                       items: $store.config.priorityApps)
+            BundleList(title: "Stay focused",
+                       subtitle: "Floating windows from these apps keep focus until closed, like dialog boxes. Clicks on the windows behind are ignored.",
+                       items: $store.config.stayFocusedApps)
             BundleList(title: "Never manage",
                        subtitle: "HyprMac ignores these apps completely: no tiling, no workspaces.",
                        items: $store.config.ignoreApps)
@@ -670,8 +672,10 @@ struct CheatSheetView: View {
         func pick(_ actions: Set<Action>) -> [Keybind] { b.filter { actions.contains($0.action) } }
         return [
             ("Apps", pick([.openapp, .exec, .launcher, .spotlight, .showkeys, .settings, .reload, .pause])),
-            ("Windows", pick([.close, .quitapp, .togglefloating, .fullscreen, .maximize, .togglesplit, .pseudo, .focus, .swap, .resizewidth, .resizeheight])),
-            ("Workspaces", pick([.workspace, .movetoworkspace, .movetoworkspacesilent, .workspacenext, .workspaceprev, .workspaceformer])),
+            ("Windows", pick([.close, .closeall, .quitapp, .minimize, .togglefloating, .pop, .fullscreen, .maximize, .togglesplit, .pseudo,
+                              .focus, .swap, .resizewidth, .resizeheight, .togglegaps, .togglesquare])),
+            ("Workspaces", pick([.workspace, .movetoworkspace, .movetoworkspacesilent, .workspacenext, .workspaceprev, .workspaceformer,
+                                 .scratchpad, .movetoscratchpad, .focusmonitor, .movewindowtomonitor, .moveworkspacetomonitor])),
         ].filter { !$0.1.isEmpty }
     }
 

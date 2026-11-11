@@ -10,11 +10,13 @@ final class ManagedWindow {
     let bundleID: String
     var workspace: Int
     var floating = false
-    /// A floating window that behaves like a dialog (Priority level).
+    /// A floating window that behaves like a dialog (Dialogue Box level).
     var dialogLike = false
     var pseudo = false
     var pseudoSize: CGSize?
     var floatFrame: CGRect?
+    /// Floating and shown on every workspace of its monitor (Hyprland's pin).
+    var pinned = false
     var hidden = false
     var lastSet: CGRect?
     /// The size and position HyprMac last gave the window. Unlike `lastSet` this
@@ -68,7 +70,7 @@ final class WindowManager {
     private var suppressFocusUntil = Date.distantPast
     private var snapWork: [CGWindowID: DispatchWorkItem] = [:]
     private var hoverWork: DispatchWorkItem?
-    private var floatRaiseWork: [DispatchWorkItem] = []
+    private var layerWork: [DispatchWorkItem] = []
 
     /// Dialogs, alerts and panels from apps. HyprMac doesn't tile these, but
     /// keeps them above the tiles and brings new dialogs to your attention.
@@ -88,8 +90,7 @@ final class WindowManager {
     private let recheckIgnored: TimeInterval = 10
 
     /// The floating window, dialog or HyprMac Settings window that has focus.
-    /// It gets the glow, and while "keep focus until closed" is on, the tiles
-    /// behind it are blurred and can't take focus until it closes.
+    /// It gets the glow. Dialogue Box and Stay focused windows hold focus until closed.
     private enum Focal: Equatable {
         case managed(CGWindowID)
         case popup(CGWindowID)
@@ -102,7 +103,6 @@ final class WindowManager {
     private weak var ownFocalWindow: NSWindow?
     /// Whether HyprMac's own focal window is an alert (Dialogue Box) rather than Settings.
     private var ownIsDialog = false
-    private let blur = BlurOverlay()
 
     /// When each app was launched, to tell its first windows apart from ones
     /// an app opens on its own in the background.
@@ -166,8 +166,15 @@ final class WindowManager {
     private var lastDragLayout = Date.distantPast
     private var dragLayoutPending = false
 
+    /// Hyprland's special workspace "scratchpad": hidden until toggled, then
+    /// shown over the focused monitor's workspace.
+    static let scratchpad = 11
+    /// The monitor showing the scratchpad, if it's open.
+    private var scratchpadOn: CGDirectDisplayID?
+
     private init() {
         for n in 1...10 { workspaces[n] = Workspace(n) }
+        workspaces[Self.scratchpad] = Workspace(Self.scratchpad)
     }
 
     // MARK: - Lifecycle
@@ -336,7 +343,7 @@ final class WindowManager {
     }
 
     private func noteWorkspace(_ bundle: String, _ n: Int) {
-        guard !bundle.isEmpty, lastWorkspace[bundle] != n else { return }
+        guard !bundle.isEmpty, (1...10).contains(n), lastWorkspace[bundle] != n else { return }
         lastWorkspace[bundle] = n
         saveStateSoon()
     }
@@ -494,7 +501,6 @@ final class WindowManager {
         if p {
             restoreAll()
             focal = nil
-            blur.hide()
             border.hide()
             windows.removeAll()
             for ws in workspaces.values {
@@ -624,6 +630,7 @@ final class WindowManager {
             }
         }
         popups = popups.filter { seenPopups.contains($0.key) }
+        updateSettingsLevel()
         ignoredWindows = ignoredWindows.filter { seenIgnored.contains($0.key) }
         if focal != nil { refreshFocal() }
         for (id, w) in windows where !seen.contains(id) {
@@ -673,7 +680,7 @@ final class WindowManager {
 
     private func add(_ el: AXUIElement, id: CGWindowID, pid: pid_t, bundle: String, initial: Bool) {
         let frame = AX.frame(el) ?? .zero
-        var n = activeWorkspace(on: focusedMonitor)
+        var n = focusedWorkspace
         if initial, let m = monitors.first(where: { $0.frame.contains(frame.center) }), let a = active[m.id] {
             n = a
         }
@@ -712,7 +719,14 @@ final class WindowManager {
         let ws = workspaces[n]!
         let w = ManagedWindow(id: id, pid: pid, el: el, bundleID: bundle, workspace: n)
         w.floating = memory?.floating ?? saved?.floating ?? shouldFloat(el, bundle: bundle)
-        if w.floating {
+        let pipScreen = (monitorShowing(n) ?? ws.monitor).flatMap(monitor) ?? monitor(focusedMonitor)
+        if memory == nil, isPictureInPicture(el), let m = pipScreen {
+            // Omarchy's pip rule: float, pin, 600x338, top right, 40 px in and 4% down.
+            w.floating = true
+            w.pinned = true
+            w.floatFrame = CGRect(x: m.frame.maxX - 600 - 40, y: max(m.visible.minY, m.frame.minY + m.frame.height * 0.04),
+                                  width: 600, height: 338)
+        } else if w.floating {
             w.dialogLike = isDialogLike(el)
             w.floatFrame = memory?.floatFrame ?? frame
             // New floating windows open centered on their workspace's screen.
@@ -786,6 +800,10 @@ final class WindowManager {
         guard !current.isEmpty else { return }  // displays asleep or mid-reconfiguration
         monitors = current
         let ids = Set(monitors.map(\.id))
+        if let s = scratchpadOn, !ids.contains(s) {
+            scratchpadOn = nil
+            hide(workspace: Self.scratchpad)
+        }
         for (m, n) in active where !ids.contains(m) {
             // Keep the workspace's display so it returns there when reconnected.
             active[m] = nil
@@ -804,11 +822,17 @@ final class WindowManager {
     }
 
     private func monitor(_ id: CGDirectDisplayID) -> Monitor? { monitors.first { $0.id == id } }
-    func monitorShowing(_ n: Int) -> CGDirectDisplayID? { active.first { $0.value == n }?.key }
+    func monitorShowing(_ n: Int) -> CGDirectDisplayID? {
+        if n == Self.scratchpad { return scratchpadOn }
+        return active.first { $0.value == n }?.key
+    }
     func activeWorkspace(on m: CGDirectDisplayID) -> Int { active[m] ?? active.values.min() ?? 1 }
     func windows(in n: Int) -> [ManagedWindow] { windows.values.filter { $0.workspace == n } }
 
-    var focusedWorkspace: Int { activeWorkspace(on: focusedMonitor) }
+    /// The scratchpad while it's open on the focused monitor, else that monitor's workspace.
+    var focusedWorkspace: Int {
+        scratchpadOn != nil && scratchpadOn == focusedMonitor ? Self.scratchpad : activeWorkspace(on: focusedMonitor)
+    }
 
     /// (number, visible on a monitor, focused, has windows) for the menu-bar indicator.
     func workspaceStatus() -> [(n: Int, visible: Bool, focused: Bool, occupied: Bool)] {
@@ -844,6 +868,8 @@ final class WindowManager {
 
     func switchTo(_ n: Int, focus: Bool = true) {
         guard (1...10).contains(n) else { return }
+        // Hyprland's hide_special_on_workspace_change.
+        if scratchpadOn != nil { closeScratchpad(refocus: false) }
         if let m = monitorShowing(n) {
             focusedMonitor = m
             focusWorkspace(n)
@@ -854,6 +880,11 @@ final class WindowManager {
         suppressFocus()
         if let old = active[m] {
             previousWorkspace = old
+            // Pinned windows stay on screen: they come along to the new workspace.
+            for w in windows(in: old) where w.pinned {
+                if workspaces[old]?.focused == w.id { workspaces[old]?.focused = nil }
+                w.workspace = n
+            }
             hide(workspace: old)
         }
         active[m] = n
@@ -865,7 +896,7 @@ final class WindowManager {
     }
 
     private func cycleWorkspace(_ step: Int) {
-        let cur = focusedWorkspace
+        let cur = activeWorkspace(on: focusedMonitor)
         let candidates = (1...10).filter { $0 == cur || !windows(in: $0).isEmpty }
         guard let i = candidates.firstIndex(of: cur), candidates.count > 1 else { return }
         switchTo(candidates[(i + step + candidates.count) % candidates.count])
@@ -886,7 +917,7 @@ final class WindowManager {
         guard let ws = workspaces[n] else { return }
         guard let mid = monitorShowing(n), let m = monitor(mid) else { hide(workspace: n); return }
         let vf = m.visible
-        let gi = CGFloat(cfg.gapsIn), go = CGFloat(cfg.gapsOut)
+        let gi = cfg.gapsOff ? 0 : CGFloat(cfg.gapsIn), go = cfg.gapsOff ? 0 : CGFloat(cfg.gapsOut)
 
         if let root = ws.root {
             Dwindle.layout(root, vf.insetBy(dx: go - gi, dy: go - gi))
@@ -896,6 +927,11 @@ final class WindowManager {
                 if w.pseudo, let s = w.pseudoSize {
                     let size = CGSize(width: min(s.width, r.width), height: min(s.height, r.height))
                     r = CGRect(x: r.midX - size.width / 2, y: r.midY - size.height / 2, width: size.width, height: size.height)
+                }
+                if cfg.singleWindowSquare, root.isLeaf {
+                    // Omarchy's single_window_aspect_ratio = 1:1.
+                    let side = min(r.width, r.height)
+                    r = CGRect(x: r.midX - side / 2, y: r.midY - side / 2, width: side, height: side)
                 }
                 if ws.fullscreen == id {
                     r = ws.fullscreenMode == .full ? vf : vf.insetBy(dx: go, dy: go)
@@ -930,7 +966,8 @@ final class WindowManager {
     }
 
     private var visibleWindows: [ManagedWindow] {
-        let shown = Set(active.values)
+        var shown = Set(active.values)
+        if scratchpadOn != nil { shown.insert(Self.scratchpad) }
         return windows.values.filter { shown.contains($0.workspace) && !$0.hidden }
     }
 
@@ -950,34 +987,40 @@ final class WindowManager {
     private var focalLevelHolds: Bool {
         guard started, !paused else { return false }
         switch focalLevel {
-        case .dialogBox?: return true
-        case .priority?: return cfg.floatingHoldsFocus
+        case .dialogBox?, .stayFocused?: return true
         default: return false
         }
     }
 
-    /// Three levels of floating window:
+    /// How a focused floating window or dialog treats focus. Where it sits in
+    /// the stack is its Layer (see `restoreLayers`).
     /// - Dialogue Box: dialogs, alerts and sheets (including HyprMac's own).
-    ///   Always gets the pointer and always holds focus, with the blur behind.
-    /// - Priority: HyprMac's Settings and floating windows from apps on the
-    ///   Priority list. Holds focus with the blur while that setting is on.
+    ///   Always gets the pointer and always holds focus until closed.
+    /// - Stay focused: floating windows from apps on the Stay focused list
+    ///   (Hyprland's stayfocused). Holds focus until closed.
     /// - User App: every other floating window or panel (e.g. iPhone
-    ///   Mirroring). Stays on top with the glow, nothing more.
-    private enum Level { case dialogBox, priority, userApp }
+    ///   Mirroring, HyprMac's Settings). Focus moves freely.
+    private enum Level { case dialogBox, stayFocused, userApp }
 
     private var focalLevel: Level? {
         switch focal {
         case .own?:
-            return ownIsDialog ? .dialogBox : .priority
+            return ownIsDialog ? .dialogBox : .userApp
         case .popup(let id)?:
             guard let p = popups[id] else { return nil }
-            return p.isDialog ? .dialogBox : cfg.priorityApps.contains(p.bundle) ? .priority : .userApp
+            return p.isDialog ? .dialogBox : appLevel(p.bundle)
         case .managed(let id)?:
             guard let w = windows[id] else { return nil }
-            return w.dialogLike ? .dialogBox : cfg.priorityApps.contains(w.bundleID) ? .priority : .userApp
+            return w.dialogLike ? .dialogBox : appLevel(w.bundleID)
         case nil:
             return nil
         }
+    }
+
+    /// The level a non-dialog floating window gets from its app's Window Rules.
+    private func appLevel(_ bundle: String) -> Level {
+        if cfg.stayFocusedApps.contains(bundle) { return .stayFocused }
+        return .userApp
     }
 
     /// The focal window's frame in AX coordinates, or nil if it's gone or hidden.
@@ -1014,17 +1057,16 @@ final class WindowManager {
     private func setFocal(_ f: Focal) {
         focal = f
         refreshFocal()
+        restoreLayers()
     }
 
     private func clearFocal() {
         focal = nil
         cachedFocalFrame = nil
-        blur.hide()
         updateBorder()
     }
 
-    /// Keeps the blur right under the focal window and the glow on it, or lets
-    /// go once it has closed.
+    /// Keeps the glow on the focal window, or lets go once it has closed.
     private func refreshFocal() {
         guard started, !paused, focal != nil else { return }
         guard let frame = focalFrame else {
@@ -1032,14 +1074,6 @@ final class WindowManager {
             return
         }
         cachedFocalFrame = frame
-        if focalIsHolding {
-            switch focal {
-            case .managed(let id)?, .popup(let id)?: blur.show(below: Int(id))
-            default: blur.show(below: nil)
-            }
-        } else {
-            blur.hide()
-        }
         updateBorder()
     }
 
@@ -1080,7 +1114,7 @@ final class WindowManager {
     }
 
     /// The frontmost window under a point on any layer (menus included),
-    /// skipping HyprMac's own windows such as the blur and the border.
+    /// skipping HyprMac's own windows such as the border.
     private func topWindowAnyLayer(at p: CGPoint) -> (id: CGWindowID, layer: Int)? {
         guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
                 as? [[String: Any]] else { return nil }
@@ -1103,23 +1137,79 @@ final class WindowManager {
         return CGRect(x: area.midX - s.width / 2, y: area.midY - s.height / 2, width: s.width, height: s.height)
     }
 
-    /// Keep floating windows above the tiles. macOS doesn't let HyprMac pin other
-    /// apps' windows on top, so whenever a tile takes focus, the floating windows
-    /// on screen are raised back over it (without taking focus). Floating windows
-    /// of the tile's own app are skipped, since raising those could steal focus.
-    private func raiseFloatingWindows() {
-        floatRaiseWork.forEach { $0.cancel() }
-        // Twice: once the tile's app has come forward, and again in case it was slow.
-        floatRaiseWork = [0.06, 0.3].map { delay in
+    /// The three layers windows stack in, top to bottom:
+    /// 1. Dialogs: dialogs, alerts and sheets, anything waiting on an answer
+    ///    (including HyprMac's own alerts).
+    /// 2. Floating: floating windows and panels, such as fixed-size app windows
+    ///    and HyprMac's Settings.
+    /// 3. Tiles: everything else.
+    private enum Layer: Int { case dialog = 1, floating, tile }
+
+    private func layer(of w: ManagedWindow) -> Layer {
+        !w.floating ? .tile : w.dialogLike ? .dialog : .floating
+    }
+
+    /// The layer of the window that has focus.
+    private var focusedLayer: Layer {
+        switch focal {
+        case .own?: return ownIsDialog ? .dialog : .floating
+        case .popup(let id)?: return popups[id]?.isDialog == true ? .dialog : .floating
+        case .managed(let id)?: return windows[id].map(layer(of:)) ?? .tile
+        case nil: return focusedWindow().map(layer(of:)) ?? .tile
+        }
+    }
+
+    /// Put the layers back in order after focus changes. macOS doesn't let
+    /// HyprMac pin other apps' windows to a level, so the windows of each layer
+    /// above the focused one are raised back over it (without taking focus):
+    /// floating windows first, then dialogs, so dialogs end up on top. The
+    /// front app's own windows are skipped, since raising one of those would
+    /// take focus from the window you picked; macOS keeps an app's dialogs
+    /// above its own windows.
+    private func restoreLayers() {
+        layerWork.forEach { $0.cancel() }
+        // A few times: right after the focused app comes forward (so a tile
+        // hovered past a floating window covers it as briefly as possible), and
+        // again in case the app was slow.
+        layerWork = [0.02, 0.08, 0.3].map { delay in
             let item = DispatchWorkItem {
                 MainActor.assumeIsolated {
-                    guard let tile = self.focusedWindow(), !tile.floating, !tile.hidden else { return }
-                    for w in self.visibleWindows where w.floating && w.pid != tile.pid { AX.raise(w.el) }
-                    for p in self.popups.values where p.pid != tile.pid { AX.raise(p.el) }
+                    guard self.started, !self.paused else { return }
+                    self.updateSettingsLevel()
+                    let focused = self.focusedLayer
+                    guard focused != .dialog else { return }
+                    let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
+                    let inScratchpad = self.focusedWorkspace == Self.scratchpad
+                    let shown = self.visibleWindows.filter {
+                        $0.pid != front && (!inScratchpad || $0.workspace == Self.scratchpad || $0.pinned)
+                    }
+                    if focused == .tile {
+                        for w in shown where self.layer(of: w) == .floating { AX.raise(w.el) }
+                        for p in self.popups.values where !p.isDialog && p.pid != front { AX.raise(p.el) }
+                        if front != getpid() { AppDelegate.shared?.raiseOwnFloatingWindows() }
+                    }
+                    for w in shown where self.layer(of: w) == .dialog { AX.raise(w.el) }
+                    for p in self.popups.values where p.isDialog && p.pid != front { AX.raise(p.el) }
                 }
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
             return item
+        }
+    }
+
+    /// HyprMac's Settings is pinned above the tiles unless another app's dialog
+    /// is on screen, which must stay above it.
+    private func updateSettingsLevel() {
+        guard AppDelegate.shared?.visibleSettingsWindow != nil else { return }
+        let onScreen = { (el: AXUIElement) -> Bool in
+            guard let f = AX.frame(el) else { return false }
+            return self.monitors.contains { $0.visible.intersects(f) }
+        }
+        let dialogs = popups.values.filter { $0.isDialog && onScreen($0.el) }.map(\.el)
+            + visibleWindows.filter { layer(of: $0) == .dialog }.map(\.el)
+        // Let down to the normal level, Settings lands in front of it: put the dialogs back on top.
+        if AppDelegate.shared?.setSettingsAboveTiles(dialogs.isEmpty) == true {
+            for el in dialogs { AX.raise(el) }
         }
     }
 
@@ -1163,6 +1253,8 @@ final class WindowManager {
             AX.setPosition(el, f.origin)
         }
         AX.raise(el)
+        // A new panel goes on top of the floating layer, but not over dialogs.
+        if !isDialog { restoreLayers() }
         guard isDialog, NSEvent.pressedMouseButtons == 0 else { return }
         AX.setBool(el, kAXMainAttribute, true)
         AX.setBool(AXUIElementCreateApplication(pid), kAXFrontmostAttribute, true)
@@ -1182,7 +1274,7 @@ final class WindowManager {
         AX.raise(w.el)
         AX.setBool(w.el, kAXMainAttribute, true)
         NSRunningApplication(processIdentifier: w.pid)?.activate()
-        if !w.floating { raiseFloatingWindows() }
+        restoreLayers()
         onStatus?()
     }
 
@@ -1225,6 +1317,7 @@ final class WindowManager {
             border.hide()
             return
         }
+        if scratchpadOn != nil, w.workspace != Self.scratchpad, !w.pinned { closeScratchpad(refocus: false) }
         if w.floating, monitorShowing(w.workspace) != nil {
             workspaces[w.workspace]?.focused = id
             setFocal(.managed(id))
@@ -1247,24 +1340,33 @@ final class WindowManager {
         let changed = workspaces[w.workspace]?.focused != id
         workspaces[w.workspace]?.focused = id
         if let m = monitorShowing(w.workspace) { focusedMonitor = m }
-        // A tile was clicked or ⌘-Tabbed to: put the floating windows back on top.
-        if changed && !w.floating { raiseFloatingWindows() }
+        // A tile was clicked or ⌘-Tabbed to: put the floating windows and dialogs back on top.
+        if changed { restoreLayers() }
         updateBorder()
         onStatus?()
     }
 
     private func updateBorder(_ hint: ManagedWindow? = nil) {
         if hint == nil, focal != nil, let f = focalFrame {
-            if cfg.borderEnabled && !paused { border.show(f, cfg: cfg) } else { border.hide() }
+            if cfg.borderEnabled && !cfg.gapsOff && !paused { border.show(f, cfg: cfg, above: focalWindowNumber) } else { border.hide() }
             return
         }
-        guard cfg.borderEnabled, !paused, let w = hint ?? focusedWindow(), !w.hidden,
+        guard cfg.borderEnabled, !cfg.gapsOff, !paused, let w = hint ?? focusedWindow(), !w.hidden,
               hint != nil || NSWorkspace.shared.frontmostApplication?.processIdentifier == w.pid,
               let f = AX.frame(w.el) else {
             border.hide()
             return
         }
-        border.show(f, cfg: cfg)
+        border.show(f, cfg: cfg, above: Int(w.id))
+    }
+
+    /// The focal window's number, for stacking the border right above it.
+    private var focalWindowNumber: Int? {
+        switch focal {
+        case .managed(let id)?, .popup(let id)?: return Int(id)
+        case .own?: return ownFocalWindow?.windowNumber
+        case nil: return nil
+        }
     }
 
     // MARK: - Directional helpers
@@ -1338,8 +1440,25 @@ final class WindowManager {
         case .workspaceformer: if let p = previousWorkspace { switchTo(p) }
         case .close:
             if let w = focusedWindow(), let btn = AX.element(w.el, kAXCloseButtonAttribute) { AX.press(btn) }
+        case .closeall: closeAll()
         case .quitapp: quitFocusedApp()
+        case .minimize:
+            if let w = focusedWindow() {
+                AX.setBool(w.el, kAXMinimizedAttribute, true)
+                scheduleRefresh(delay: 0.3)
+            }
         case .togglefloating: toggleFloating()
+        case .pop: togglePop()
+        case .scratchpad: toggleScratchpad()
+        case .movetoscratchpad: if let w = focusedWindow() { move(w, to: Self.scratchpad, follow: false) }
+        case .focusmonitor: focusMonitor(arg.lowercased().hasPrefix("p") ? -1 : 1)
+        case .movewindowtomonitor:
+            if let d = Dir(rawValue: arg.lowercased()), let w = focusedWindow(), let m = monitor(in: d, from: focusedMonitor) {
+                move(w, to: activeWorkspace(on: m.id), follow: true)
+            }
+        case .moveworkspacetomonitor: if let d = Dir(rawValue: arg.lowercased()) { moveWorkspaceToMonitor(d) }
+        case .togglegaps: ConfigStore.shared.config.gapsOff.toggle()
+        case .togglesquare: ConfigStore.shared.config.singleWindowSquare.toggle()
         case .fullscreen: toggleFullscreen(.full)
         case .maximize: toggleFullscreen(.maximize)
         case .togglesplit:
@@ -1434,6 +1553,9 @@ final class WindowManager {
         let ws = workspaces[cur.workspace]
         let cands = visibleWindows
             .filter { $0.id != cur.id && (ws?.fullscreen == nil || $0.workspace != cur.workspace) }
+            // In the scratchpad, skip the tiles hidden under it on the same monitor.
+            .filter { cur.workspace != Self.scratchpad || $0.workspace == Self.scratchpad
+                || monitorShowing($0.workspace) != monitorShowing(cur.workspace) }
             .compactMap { w in rect(w).map { (w, $0) } }
         if let n = neighbor(of: r, d, among: cands) {
             focus(n)
@@ -1469,7 +1591,7 @@ final class WindowManager {
     }
 
     /// Shows one of HyprMac's own alerts with the same treatment as other apps'
-    /// dialogs: in front, Priority focus (blur behind), and the pointer on it.
+    /// dialogs: in front (top layer), focus held, and the pointer on it.
     /// For async code (like the updater). The alert is opened from the run loop,
     /// not from inside the queued task: an alert opened inside a task keeps
     /// HyprMac's main queue busy until it closes, which stalled the pointer move,
@@ -1483,10 +1605,11 @@ final class WindowManager {
     }
 
     /// Opens one of HyprMac's own alerts right away, as a Dialogue Box: in front,
-    /// focus held with the blur behind, and the pointer on it. For code that
+    /// focus held, and the pointer on it. For code that
     /// already runs from the run loop, such as a button or menu action.
     func runAlert(_ alert: NSAlert) -> NSApplication.ModalResponse {
-        alert.window.level = .floating
+        // Above HyprMac's Settings and every other app's normal windows: the dialog layer.
+        alert.window.level = .modalPanel
         let previous = ownFocalWindow
         let previousWasDialog = ownIsDialog
         // runModal only returns when the alert closes, and the alert takes 50-100+ ms
@@ -1570,7 +1693,9 @@ final class WindowManager {
 
     func move(_ w: ManagedWindow, to n: Int, follow: Bool) {
         let from = w.workspace
-        guard (1...10).contains(n), from != n, let src = workspaces[from], let dst = workspaces[n] else { return }
+        guard (1...10).contains(n) || n == Self.scratchpad, from != n,
+              let src = workspaces[from], let dst = workspaces[n] else { return }
+        w.pinned = false
         Dwindle.remove(src, w.id)
         if src.focused == w.id { src.focused = nil }
         if src.fullscreen == w.id { src.fullscreen = nil }
@@ -1597,6 +1722,7 @@ final class WindowManager {
               let m = monitorShowing(ws.n).flatMap(monitor) else { return }
         if w.floating {
             w.floating = false
+            w.pinned = false
             Dwindle.insert(ws, w.id, near: nil)
         } else {
             Dwindle.remove(ws, w.id)
@@ -1612,6 +1738,107 @@ final class WindowManager {
         apply(ws.n)
         AX.raise(w.el)
         updateBorder()
+    }
+
+    /// Omarchy's Super+O: float the window at 1300x900, centered, and pin it so
+    /// it stays on screen across workspace switches. Again to put it back.
+    private func togglePop() {
+        guard let w = focusedWindow(), let ws = workspaces[w.workspace],
+              let m = monitorShowing(ws.n).flatMap(monitor) else { return }
+        if w.pinned {
+            w.pinned = false
+            if w.floating { toggleFloating() }
+            return
+        }
+        if !w.floating {
+            Dwindle.remove(ws, w.id)
+            if ws.fullscreen == w.id { ws.fullscreen = nil }
+            w.floating = true
+            w.pseudo = false
+        }
+        w.pinned = true
+        w.floatFrame = centered(CGSize(width: 1300, height: 900), in: m.visible)
+        w.lastSet = nil
+        apply(ws.n)
+        AX.raise(w.el)
+        updateBorder()
+    }
+
+    /// Omarchy's Ctrl+Alt+Delete: close every window (apps can still ask to
+    /// save), then go to workspace 1.
+    private func closeAll() {
+        for w in windows.values {
+            if let btn = AX.element(w.el, kAXCloseButtonAttribute) { AX.press(btn) }
+        }
+        switchTo(1)
+    }
+
+    /// Shows the scratchpad over the focused monitor, or hides it. Shown on
+    /// another monitor, it moves here.
+    private func toggleScratchpad() {
+        let here = focusedMonitor
+        let wasHere = scratchpadOn == here
+        if scratchpadOn != nil { closeScratchpad(refocus: wasHere) }
+        guard !wasHere, monitor(here) != nil else { return }
+        scratchpadOn = here
+        workspaces[Self.scratchpad]?.monitor = here
+        for w in windows(in: Self.scratchpad) { w.lastSet = nil }
+        suppressFocus()
+        apply(Self.scratchpad)
+        for w in windows(in: Self.scratchpad) { AX.raise(w.el) }
+        focusWorkspace(Self.scratchpad)
+        onStatus?()
+    }
+
+    private func closeScratchpad(refocus: Bool) {
+        guard scratchpadOn != nil else { return }
+        scratchpadOn = nil
+        hide(workspace: Self.scratchpad)
+        if refocus { focusWorkspace(focusedWorkspace) }
+        onStatus?()
+    }
+
+    /// Ctrl+Alt+Tab: focus the next (or previous) monitor, left to right.
+    private func focusMonitor(_ step: Int) {
+        let sorted = monitors.sorted { ($0.frame.minX, $0.frame.minY) < ($1.frame.minX, $1.frame.minY) }
+        guard sorted.count > 1, let i = sorted.firstIndex(where: { $0.id == focusedMonitor }) else { return }
+        let m = sorted[(i + step + sorted.count) % sorted.count]
+        focusedMonitor = m.id
+        focusWorkspace(focusedWorkspace)
+        movePointerToFocus(on: m)
+        onStatus?()
+    }
+
+    /// Moves the focused monitor's workspace to the monitor in `d`. The monitor
+    /// it leaves shows an empty workspace instead.
+    private func moveWorkspaceToMonitor(_ d: Dir) {
+        let src = focusedMonitor
+        guard let target = monitor(in: d, from: src), let n = active[src] else { return }
+        if scratchpadOn != nil { closeScratchpad(refocus: false) }
+        suppressFocus()
+        if let old = active[target.id] { hide(workspace: old) }
+        active[target.id] = n
+        lastShown[target.id] = n
+        workspaces[n]?.monitor = target.id
+        let used = Set(active.values)
+        let fill = (1...10).first { !used.contains($0) && windows(in: $0).isEmpty }
+            ?? (1...10).first { !used.contains($0) } ?? n
+        active[src] = fill
+        lastShown[src] = fill
+        workspaces[fill]?.monitor = src
+        for w in windows(in: n) + windows(in: fill) { w.lastSet = nil }
+        apply(n)
+        apply(fill)
+        focusedMonitor = target.id
+        focusWorkspace(n)
+        movePointerToFocus(on: target)
+        onStatus?()
+    }
+
+    /// Omarchy floats and pins windows titled "Picture in Picture" (browsers' PiP).
+    private func isPictureInPicture(_ el: AXUIElement) -> Bool {
+        guard let title = AX.string(el, kAXTitleAttribute) else { return false }
+        return title.range(of: "Picture.?in.?picture", options: [.regularExpression, .caseInsensitive]) != nil
     }
 
     private func toggleFullscreen(_ mode: Workspace.FullscreenMode) {
@@ -1770,6 +1997,9 @@ final class WindowManager {
         guard cfg.focusFollowsMouse, drag == nil, !paused, NSEvent.pressedMouseButtons == 0 else { return }
         if let f = focusedWindow(), !f.hidden, rect(f)?.contains(p) == true,
            NSWorkspace.shared.frontmostApplication?.processIdentifier == f.pid { return }
+        if NSApp.isActive, let s = AppDelegate.shared?.visibleSettingsWindow, NSApp.keyWindow === s,
+           let h = NSScreen.screens.first?.frame.height,
+           CGRect(x: s.frame.minX, y: h - s.frame.maxY, width: s.frame.width, height: s.frame.height).contains(p) { return }
         hoverWork?.cancel()
         if Date().timeIntervalSince(lastHoverCheck) >= 0.03 {
             hoverFocus(at: p)
@@ -1783,9 +2013,21 @@ final class WindowManager {
     private func hoverFocus(at p: CGPoint) {
         lastHoverCheck = Date()
         guard cfg.focusFollowsMouse, drag == nil, !paused, NSEvent.pressedMouseButtons == 0 else { return }
-        // Leave focus alone while one of HyprMac's own windows (settings, launcher) is in use.
-        if NSApp.isActive, NSApp.keyWindow != nil { return }
+        // Leave focus alone while the launcher, cheat sheet, an alert or a sheet on
+        // Settings is open. Settings itself is a floating window like any other.
+        let settings = AppDelegate.shared?.visibleSettingsWindow
+        if NSApp.isActive, let key = NSApp.keyWindow, key !== settings || key.attachedSheet != nil { return }
         if focalIsHolding || popupHasFocus { return }
+        // Hovering past the scratchpad shouldn't close it; a click does.
+        if scratchpadOn != nil { return }
+        if let settings, let top = topWindowNumber(at: p, including: settings), top == settings.windowNumber {
+            // Hovering HyprMac's Settings focuses it.
+            if !(NSApp.isActive && NSApp.keyWindow === settings) {
+                AppDelegate.shared?.bringForward(settings)
+                setOwnFocal(settings)
+            }
+            return
+        }
         guard let top = topWindowID(at: p) else {
             // Over the empty desktop: just remember which display the pointer is on.
             if let m = monitors.first(where: { $0.frame.contains(p) }), m.id != focusedMonitor {
@@ -1801,16 +2043,34 @@ final class WindowManager {
         focus(w)
     }
 
-    /// True when the focused window is a popup, dialog or floating window rather
-    /// than a tile. macOS won't let HyprMac keep another app's window above the
-    /// rest, so instead such a window keeps focus until you click elsewhere;
-    /// otherwise hovering a tile beside it would raise that tile over it.
+    /// True when the focused window is a popup or panel HyprMac doesn't manage
+    /// (palettes, Find bars, Screenshot). Those keep focus until you click
+    /// elsewhere. Floating windows HyprMac manages follow the pointer like tiles;
+    /// when a tile takes focus, restoreLayers puts them back on top.
     private var popupHasFocus: Bool {
         guard let front = NSWorkspace.shared.frontmostApplication, front.processIdentifier != getpid(),
               let fw = AX.element(AXUIElementCreateApplication(front.processIdentifier), kAXFocusedWindowAttribute),
               let id = AX.windowID(fw) else { return false }
-        guard let w = windows[id] else { return true }  // a window HyprMac doesn't tile
-        return w.floating
+        return windows[id] == nil
+    }
+
+    /// The number of the frontmost normal window under a point, counting
+    /// `own` (one of HyprMac's windows) but not HyprMac's other windows.
+    private func topWindowNumber(at p: CGPoint, including own: NSWindow) -> Int? {
+        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+                as? [[String: Any]] else { return nil }
+        let me = getpid()
+        for info in list {
+            guard let pid = (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value,
+                  let n = (info[kCGWindowNumber as String] as? NSNumber)?.intValue,
+                  pid != me || n == own.windowNumber,
+                  let layer = (info[kCGWindowLayer as String] as? NSNumber)?.intValue, (0..<20).contains(layer),
+                  ((info[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1) > 0,
+                  let bounds = info[kCGWindowBounds as String] as? NSDictionary,
+                  let r = CGRect(dictionaryRepresentation: bounds), r.contains(p) else { continue }
+            return n
+        }
+        return nil
     }
 
     /// The frontmost window under a point, in macOS's real stacking order, so

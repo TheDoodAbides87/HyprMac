@@ -154,6 +154,8 @@ final class InputTap {
 }
 
 /// The Hyprland-style active border: a click-through overlay drawn around the focused window.
+/// It sits in the normal window level, stacked just above the window it outlines, so
+/// floating windows, dialogs and menus above that window also cover its border.
 @MainActor
 final class BorderOverlay {
     private let window: NSWindow
@@ -167,14 +169,15 @@ final class BorderOverlay {
         window.backgroundColor = .clear
         window.hasShadow = false
         window.ignoresMouseEvents = true
-        window.level = .floating
+        window.level = .normal
         window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
         window.isReleasedWhenClosed = false
         box.wantsLayer = true
         window.contentView = box
     }
 
-    func show(_ axFrame: CGRect, cfg: Config) {
+    /// `above` is the outlined window's number; nil puts the border in front of all normal windows.
+    func show(_ axFrame: CGRect, cfg: Config, above: Int?) {
         guard let h = NSScreen.screens.first?.frame.height else { return }
         let bw = CGFloat(cfg.borderWidth)
         let r = CGRect(x: axFrame.minX, y: h - axFrame.maxY, width: axFrame.width, height: axFrame.height)
@@ -189,7 +192,11 @@ final class BorderOverlay {
             layer.borderColor = color
             layer.cornerRadius = CGFloat(cfg.borderRadius) + bw
         }
-        window.orderFrontRegardless()
+        if let n = above {
+            window.order(.above, relativeTo: n)
+        } else {
+            window.orderFrontRegardless()
+        }
     }
 
     func hide() {

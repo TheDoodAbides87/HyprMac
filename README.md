@@ -12,9 +12,10 @@ What it does:
 - **Gaps and an active border.** The defaults match a typical Hyprland config: `gaps_in 5`, `gaps_out 10`, and a 2 px border.
 - **A built-in app launcher** (⌥ Option + Space): type, use the arrow keys, and press Return.
 - **Menu-bar workspace indicator**, similar to Waybar's.
-- **Click or hover to focus.** Choose in Settings › General whether a window takes focus when you click it (the macOS default) or as soon as the pointer moves onto it. With hover, a popup, dialog or floating window keeps focus until you click elsewhere, so the tiles around it can't cover it.
+- **Omarchy's window management.** The shortcuts, window rules and toggles follow [Omarchy](https://omarchy.org)'s Hyprland config as closely as macOS allows: scratchpad, pop-out (float and pin), minimize, close all, monitor moves, fine and coarse resize steps, the gaps toggle, single-window square, and Picture-in-Picture windows that float and pin to the top right.
+- **Hover or click to focus.** Choose in Settings › General whether a window takes focus as soon as the pointer moves onto it (the default, like Omarchy's `follow_mouse = 1`) or when you click it (the macOS default). With hover, floating windows (HyprMac's Settings included) take focus too and stay above the tiles as focus moves on. Dialogs keep focus until they close.
 - **The pointer follows focus.** When you move focus with ⌥ Option + arrow keys or open a new window, the pointer jumps to it. You can turn this off in Settings › General.
-- **Floating windows and dialogs stay on top and keep focus.** New floating windows open centered and get the focus glow, including HyprMac's Settings. Floating windows come in three levels. **Dialogue Box** (dialogs, alerts and sheets, including HyprMac's own) always gets the pointer and keeps focus until closed, with the windows behind blurred. **Priority** (HyprMac's Settings and floating windows from apps you add under Settings › Window Rules › Priority) does the same while that setting is on. **User App** (every other floating window, like iPhone Mirroring) just stays on top with the glow. You can turn off the Priority behavior in Settings › General.
+- **Windows stack in three layers.** Dialogs, alerts and sheets (anything waiting on an answer, including HyprMac's own) are always on top. Below them are floating windows: fixed-size app windows, apps on the Always float list, windows you float yourself, and HyprMac's Settings. Tiles are at the bottom. Whenever focus changes, HyprMac puts that order back, so a tile never covers a floating window and a floating window never covers a dialog. Dialogs also get the pointer and keep focus until closed. So do floating windows from apps you add under Settings › Window Rules › Stay focused (like Hyprland's `stayfocused`). New floating windows open centered and get the focus glow.
 - **App workspaces.** In Settings › App Workspaces, pick apps from a dropdown and choose the workspace each one opens on: a fixed one, or the one you last used it on. Tick **Open at startup** to have HyprMac open the app when it starts.
 - **Room for screenshots.** Click a screenshot thumbnail to edit it and HyprMac switches to an empty workspace, then back when you click Done. You can turn this off in Settings › General.
 - **Updates itself** from GitHub releases (see [Updates](#updates)).
@@ -26,7 +27,7 @@ It doesn't need SIP turned off and has no dependencies. It's built from Swift so
 
 ![Tiled terminals running btop and fastfetch on HyprMac](docs/screenshots/tiling.jpg)
 
-| App launcher (⌥ Option + Space) | Settings, with the windows behind blurred |
+| App launcher (⌥ Option + Space) | Settings, above the tiles |
 |---|---|
 | ![The built-in app launcher](docs/screenshots/launcher.jpg) | ![HyprMac Settings showing the Keybindings tab](docs/screenshots/settings.jpg) |
 
@@ -71,9 +72,14 @@ Window shortcuts use **⌥ Option** as the main modifier. A few also add **⌘ C
 | ⌥ Option + ⌘ Command + Space | HyprMac settings |
 | ⌥ Option + K | Keybinding cheat sheet |
 | ⌥ Option + ⇧ Shift + B / F / N / M / T | Browser / Finder / editor / music / Activity Monitor |
-| ⌥ Option + W | Close window |
+| ⌥ Option + ⇧ Shift + Return | Browser |
+| ⌥ Option + ⇧ Shift + Q / / | Calculator / Passwords |
+| ⌥ Option + W or Q | Close window |
+| ⌃ Control + ⌘ Command + ⌦ Delete | Close all windows, then go to workspace 1 |
 | ⌥ Option + ⇧ Shift + W | Quit the app in front (like ⌘Q) |
+| ⌥ Option + M | Minimize window |
 | ⌥ Option + T | Toggle floating |
+| ⌥ Option + O | Pop window out: float it at 1300×900, centered, and pin it so it stays on screen across workspaces. Again to put it back |
 | ⌥ Option + F | Fullscreen |
 | ⌥ Option + ⌘ Command + F | Maximize, keeping gaps |
 | ⌥ Option + J | Toggle split direction |
@@ -82,8 +88,17 @@ Window shortcuts use **⌥ Option** as the main modifier. A few also add **⌘ C
 | ⌥ Option + ⇧ Shift + ←↑→↓ | Swap window (moves to the next monitor at an edge) |
 | ⌥ Option + − / = | Shrink / grow width |
 | ⌥ Option + ⇧ Shift + − / = | Shrink / grow height |
+| add ⌘ Command / ⌃ Control to the resize keys | Resize by a little (25 px) / a lot (300 px) |
+| ⌥ Option + ⇧ Shift + ⌫ | Toggle gaps and border |
+| ⌥ Option + ⌃ Control + ⌫ | Keep a workspace's only window square |
 | ⌥ Option + 1…0 | Switch to workspace 1–10 |
 | ⌥ Option + ⇧ Shift + 1…0 | Move window to workspace 1–10 |
+| ⌥ Option + ⇧ Shift + ⌘ Command + 1…0 | Move window to workspace 1–10 without following it |
+| ⌥ Option + S | Show / hide the scratchpad (a hidden workspace shown over the current one) |
+| ⌥ Option + ⌘ Command + S | Move window to the scratchpad |
+| ⌃ Control + ⌘ Command + Tab / ⇧ Shift + Tab | Focus next / previous monitor |
+| ⌥ Option + ⇧ Shift + ⌃ Control + ←↑→↓ | Move window to the monitor in that direction |
+| ⌥ Option + ⇧ Shift + ⌘ Command + ←↑→↓ | Move workspace to the monitor in that direction |
 | ⌥ Option + Tab / ⇧ Shift + Tab | Next / previous occupied workspace |
 | ⌃ Control + ⌥ Option + Tab | Former workspace |
 | ⌃ Control + ⌥ Option + Esc | Pause / resume tiling |
@@ -130,7 +145,6 @@ In the JSON, `super` means the main modifier and `alt` means the second modifier
 | `Launcher.swift` | Built-in app launcher |
 | `Apps.swift` | Installed-app catalog and default apps |
 | `Updater.swift` | Self-updates from GitHub releases |
-| `BlurOverlay.swift` | Blur behind the floating window that holds focus |
 | `AppDelegate.swift` | Menu-bar item, permission flow, window plumbing |
 
 ## License
