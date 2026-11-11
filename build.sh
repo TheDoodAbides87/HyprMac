@@ -22,13 +22,12 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/HyprMac "$APP/Contents/MacOS/HyprMac"
 
-# App icon: render the tiled apple and pack it into an .icns.
+# App icon: pack the 1024 px master (made from the artwork by Tools/make-icon.swift) into an .icns.
 ICONSET=build/AppIcon.iconset
 rm -rf "$ICONSET" && mkdir -p "$ICONSET"
-swift Tools/make-icon.swift build/icon.png >/dev/null
 for px in 16 32 128 256 512; do
-    sips -z $px $px build/icon.png --out "$ICONSET/icon_${px}x${px}.png" >/dev/null
-    sips -z $((px * 2)) $((px * 2)) build/icon.png --out "$ICONSET/icon_${px}x${px}@2x.png" >/dev/null
+    sips -z $px $px Resources/AppIcon.png --out "$ICONSET/icon_${px}x${px}.png" >/dev/null
+    sips -z $((px * 2)) $((px * 2)) Resources/AppIcon.png --out "$ICONSET/icon_${px}x${px}@2x.png" >/dev/null
 done
 iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
 
