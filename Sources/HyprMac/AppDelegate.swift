@@ -101,15 +101,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         pauseItem.state = WindowManager.shared.paused ? .on : .off
     }
 
-    /// Waybar-style workspace indicator: occupied workspaces listed, focused one highlighted.
+    /// Waybar-style workspace indicator: occupied workspaces listed as
+    /// "1: [icons]  2: [icons]", with the focused one highlighted.
     /// What the indicator last showed, so it's only redrawn when that changes.
     private var lastStatusKey = ""
+    /// App icons sized for the menu bar (19 pt, about the height of the bar's own icons), keyed by pid and whether they're dimmed.
+    private var statusIcons: [String: NSImage] = [:]
+    private static let maxIconsPerWorkspace = 6
+
+    private func statusIcon(_ pid: pid_t, dimmed: Bool) -> NSImage? {
+        let key = "\(pid)\(dimmed ? "d" : "")"
+        if let cached = statusIcons[key] { return cached }
+        guard let app = NSRunningApplication(processIdentifier: pid), let icon = app.icon else { return nil }
+        let side: CGFloat = 19
+        let image = NSImage(size: NSSize(width: side, height: side), flipped: false) { rect in
+            icon.draw(in: rect, from: .zero, operation: .sourceOver, fraction: dimmed ? 0.75 : 1)
+            return true
+        }
+        statusIcons[key] = image
+        return image
+    }
 
     func renderStatus() {
         guard let button = statusItem?.button else { return }
         let wm = WindowManager.shared
         let status = wm.started ? wm.workspaceStatus() : []
-        let key = "\(wm.started)|\(wm.paused)|" + status.map { "\($0.n)\($0.visible ? "v" : "")\($0.focused ? "f" : "")\($0.occupied ? "o" : "")" }.joined(separator: ",")
+        let key = "\(wm.started)|\(wm.paused)|" + status.map {
+            "\($0.n)\($0.visible ? "v" : "")\($0.focused ? "f" : "")\($0.occupied ? "o" : "")" + $0.apps.map(String.init).joined(separator: ".")
+        }.joined(separator: ",")
         guard key != lastStatusKey else { return }
         lastStatusKey = key
         if !wm.started {
@@ -120,6 +139,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             button.attributedTitle = NSAttributedString(string: "⏸ HyprMac")
             return
         }
+        // Forget icons of apps that have quit, so a reused pid can't show a stale icon.
+        let live = Set(status.flatMap(\.apps))
+        statusIcons = statusIcons.filter { live.contains(pid_t($0.key.trimmingCharacters(in: .letters)) ?? 0) }
+
         let out = NSMutableAttributedString()
         let font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
         let bold = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .heavy)
@@ -130,8 +153,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
                 .foregroundColor: s.focused ? NSColor.labelColor : (s.visible ? NSColor.secondaryLabelColor : NSColor.tertiaryLabelColor),
                 .underlineStyle: s.focused ? NSUnderlineStyle.single.rawValue : 0,
             ]
-            if out.length > 0 { out.append(NSAttributedString(string: "  ", attributes: [.font: font])) }
+            if out.length > 0 { out.append(NSAttributedString(string: "   ", attributes: [.font: font])) }
             out.append(NSAttributedString(string: label, attributes: attrs))
+            guard !s.apps.isEmpty else { continue }
+            out.append(NSAttributedString(string: ":", attributes: attrs.filter { $0.key != .underlineStyle }))
+            let dimmed = !s.focused && !s.visible
+            for pid in s.apps.prefix(Self.maxIconsPerWorkspace) {
+                guard let icon = statusIcon(pid, dimmed: dimmed) else { continue }
+                let attachment = NSTextAttachment()
+                attachment.image = icon
+                // Center the icon on the digits.
+                attachment.bounds = CGRect(x: 0, y: (font.capHeight - icon.size.height) / 2, width: icon.size.width, height: icon.size.height)
+                out.append(NSAttributedString(string: " ", attributes: [.font: font]))
+                out.append(NSAttributedString(attachment: attachment))
+            }
+            let extra = s.apps.count - Self.maxIconsPerWorkspace
+            if extra > 0 {
+                out.append(NSAttributedString(string: " +\(extra)", attributes: attrs.filter { $0.key != .underlineStyle }))
+            }
         }
         button.attributedTitle = out
     }

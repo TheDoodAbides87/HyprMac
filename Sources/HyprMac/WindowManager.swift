@@ -858,11 +858,22 @@ final class WindowManager {
     }
 
     /// (number, visible on a monitor, focused, has windows) for the menu-bar indicator.
-    func workspaceStatus() -> [(n: Int, visible: Bool, focused: Bool, occupied: Bool)] {
-        let occupied = Set(windows.values.map(\.workspace))
+    /// Each workspace's state plus the apps on it, one entry per app: tiles in
+    /// layout order, then floating windows.
+    func workspaceStatus() -> [(n: Int, visible: Bool, focused: Bool, occupied: Bool, apps: [pid_t])] {
+        var byWorkspace: [Int: [ManagedWindow]] = [:]
+        for w in windows.values { byWorkspace[w.workspace, default: []].append(w) }
         let shown = Set(active.values)
         let focused = focusedWorkspace
-        return (1...10).map { n in (n, shown.contains(n), n == focused, occupied.contains(n)) }
+        return (1...10).map { n in
+            let ws = byWorkspace[n] ?? []
+            let order = workspaces[n]?.root?.leaves().compactMap(\.win) ?? []
+            let rank = Dictionary(order.enumerated().map { ($1, $0) }, uniquingKeysWith: { a, _ in a })
+            let sorted = ws.sorted { (rank[$0.id] ?? .max, $0.id) < (rank[$1.id] ?? .max, $1.id) }
+            var seen = Set<pid_t>()
+            let apps = sorted.map(\.pid).filter { seen.insert($0).inserted }
+            return (n, shown.contains(n), n == focused, !ws.isEmpty, apps)
+        }
     }
 
     private var hideCorner: CGPoint {

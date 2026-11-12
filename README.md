@@ -11,7 +11,7 @@ What it does:
 - **Hyprland-style keybindings**, plus mouse controls: hold ⌥ Option and drag, right-drag or scroll.
 - **Gaps and an active border.** The defaults match a typical Hyprland config: `gaps_in 5`, `gaps_out 10`, and a 2 px border.
 - **A built-in app launcher** (⌥ Option + Space): type, use the arrow keys, and press Return.
-- **Menu-bar workspace indicator**, similar to Waybar's.
+- **Menu-bar workspace indicator**, similar to Waybar's, showing each workspace's number with the icons of the apps on it.
 - **Hyprland-style window management.** Scratchpad, pop-out (float and pin), minimize, close all, monitor moves, fine and coarse resize steps, the gaps toggle, single-window square, and Picture-in-Picture windows that float and pin to the top right.
 - **Hover or click to focus.** Choose in Settings › General whether a window takes focus as soon as the pointer moves onto it (the default, like Hyprland's `follow_mouse = 1`) or when you click it (the macOS default). With hover, floating windows (HyprMac's Settings included) take focus too and stay above the tiles as focus moves on. Dialogs keep focus until they close.
 - **The pointer follows focus.** When you move focus with ⌥ Option + arrow keys or open a new window, the pointer jumps to it. You can turn this off in Settings › General.
